@@ -31,7 +31,9 @@ const WATCHED_DIRS = [INTAKE_DIR, PROJECTS_DIR, ARCHIVE_DIR, EXTRACTED_DIR];
 const SUPPORTED_ASSET_EXTENSIONS = new Set([
   ".wav", ".mp3", ".flac", ".aac", ".m4a",
   ".txt", ".doc", ".docx", ".pdf", ".csv",
-  ".zip", ".json", ".srt", ".vtt", ".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".mp4", ".mov", ".avi"
+  ".zip", ".json", ".srt", ".vtt",
+  ".png", ".jpg", ".jpeg", ".bmp", ".tiff",
+  ".mp4", ".mov", ".avi"
 ]);
 
 function normalizePath(p) {
@@ -474,6 +476,12 @@ ipcMain.handle("fs:rename-item", async (_event, { relativePath, newName }) => {
 
     await fsp.rename(sourcePath, targetPath);
 
+    notifyRenderer("fs:changed", {
+      type: "item-renamed",
+      oldRelativePath: relativePath,
+      newRelativePath: path.relative(APP_ROOT, targetPath)
+    });
+
     return {
       ok: true,
       oldRelativePath: relativePath,
@@ -507,6 +515,12 @@ ipcMain.handle("fs:move-item", async (_event, { sourceRelativePath, targetParent
 
     await fsp.rename(sourcePath, targetPath);
 
+    notifyRenderer("fs:changed", {
+      type: "item-moved",
+      oldRelativePath: sourceRelativePath,
+      newRelativePath: path.relative(APP_ROOT, targetPath)
+    });
+
     return {
       ok: true,
       oldRelativePath: sourceRelativePath,
@@ -527,6 +541,11 @@ ipcMain.handle("fs:delete-item", async (_event, { relativePath }) => {
     }
 
     await removePathRecursive(targetPath);
+
+    notifyRenderer("fs:changed", {
+      type: "item-deleted",
+      relativePath
+    });
 
     return { ok: true, relativePath };
   } catch (error) {
@@ -570,7 +589,13 @@ ipcMain.handle("fs:import-files", async () => {
 
       await fsp.copyFile(file, destination);
       copied.push(destination);
+      await processSingleFile(destination, "import_files");
     }
+
+    notifyRenderer("fs:changed", {
+      type: "files-imported",
+      files: copied.map((file) => path.relative(APP_ROOT, file))
+    });
 
     return { ok: true, files: copied };
   } catch (error) {
@@ -595,6 +620,16 @@ ipcMain.handle("fs:import-folder", async () => {
     }
 
     await fsp.cp(sourceFolder, destination, { recursive: true });
+
+    const importedFiles = await walkDirectory(destination);
+    for (const filePath of importedFiles) {
+      await processSingleFile(filePath, "import_folder");
+    }
+
+    notifyRenderer("fs:changed", {
+      type: "folder-imported",
+      relativePath: path.relative(APP_ROOT, destination)
+    });
 
     return { ok: true, folder: destination };
   } catch (error) {

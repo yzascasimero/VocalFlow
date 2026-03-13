@@ -69,14 +69,6 @@ let todoStore = loadTodos();
 let cachedAssets = [];
 let cachedProjects = [];
 
-const demoProjectFolders = [
-  "Media Links",
-  "Gachiclub",
-  "CCJL",
-  "Kajiu No. 8",
-  "Solo Leveling"
-];
-
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -140,6 +132,7 @@ function getSelectedInboxAsset() {
 
 function updateInboxActionState() {
   const selected = getSelectedInboxAsset();
+
   if (inboxSelectionLabel) {
     inboxSelectionLabel.textContent = selected
       ? `Selected: ${selected.file_name}`
@@ -174,6 +167,7 @@ function showApp() {
 
 function addLog(target, message) {
   if (!target) return;
+
   const row = document.createElement("div");
   row.className = "log-entry";
   row.innerHTML = `
