@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+  />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VocalFlow - CreatiVoices</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="appRoot">
+    <!-- LOGIN VIEW -->
+    <section id="loginView" class="login-screen active">
+      <div class="login-card">
+        <div class="login-logo-wrap">
+          <img src="./assets/creativoices-logo.png" alt="CreatiVoices Logo" class="login-logo" />
+        </div>
+
+        <form id="loginForm" class="login-form">
+          <label>
+            <span>Username</span>
+            <input id="username" type="text" placeholder="Enter username" />
+          </label>
+
+          <label>
+            <span>Password</span>
+            <input id="password" type="password" placeholder="Enter password" />
+          </label>
+
+          <button type="submit" class="btn btn-primary btn-full">Login</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- APP VIEW -->
+    <section id="appView" class="dashboard-shell">
+      <aside class="sidebar">
+        <div class="sidebar-top">
+          <div class="brand-block">
+            <img src="./assets/creativoices-logo.png" alt="CreatiVoices Logo" class="brand-logo" />
+          </div>
+
+          <nav class="sidebar-nav">
+            <button class="nav-item active" data-section="home">
+              <span class="nav-icon">⌂</span>
+              <span>Home</span>
+            </button>
+            <button class="nav-item" data-section="inbox">
+              <span class="nav-icon">☷</span>
+              <span>Inbox</span>
+            </button>
+            <button class="nav-item" data-section="projects">
+              <span class="nav-icon">⊞</span>
+              <span>Projects</span>
+            </button>
+            <button class="nav-item" data-section="voice-artists">
+              <span class="nav-icon">♬</span>
+              <span>Voice Artists</span>
+            </button>
+            <button class="nav-item" data-section="archive">
+              <span class="nav-icon">🗂</span>
+              <span>Archive</span>
+            </button>
+            <button class="nav-item" data-section="analytics">
+              <span class="nav-icon">↗</span>
+              <span>Analytics</span>
+            </button>
+          </nav>
+        </div>
+
+        <div class="sidebar-bottom">
+          <button id="logoutBtn" class="nav-item logout-btn">
+            <span class="nav-icon">⇠</span>
+            <span>Log Out</span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="content-area">
+        <!-- HOME -->
+        <section id="home" class="page-section active">
+          <header class="page-header">
+            <div>
+              <h1>Welcome, Admin!</h1>
+              <p>Manage intake, projects, artists, and archived files from one place.</p>
+            </div>
+          </header>
+
+          <div class="stats-grid">
+            <article class="metric-card">
+              <h3>Active Inbox</h3>
+              <div class="metric-value" id="statTotalAssets">0</div>
+              <p>files detected and tracked</p>
+            </article>
+
+            <article class="metric-card">
+              <h3>Storage Overview</h3>
+              <div class="metric-value" id="storageOverview">30%</div>
+              <p>estimated workspace usage</p>
+            </article>
+
+            <article class="metric-card">
+              <h3>Total Archive</h3>
+              <div class="metric-value" id="statMissingAssets">0</div>
+              <p>missing or archived files</p>
+            </article>
+          </div>
+
+          <div class="dashboard-grid">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Action Needed</h2>
+                <span class="muted-label">Recent file activity</span>
+              </div>
+              <div id="actionList" class="stack-list"></div>
+            </article>
+
+            <article class="panel">
+          <div class="panel-header">
+            <h2>Recent Activity</h2>
+
+            <div class="panel-actions">
+              <button id="rescanBtn" class="btn btn-primary btn-small" type="button">
+                Rescan Intake
+              </button>
+            </div>
+          </div>
+
+          <div id="eventLog" class="event-log"></div>
+        </article>
+          </div>
+
+          <div class="home-bottom-grid">
+  <article class="panel tall-panel">
+  <div class="panel-header">
+    <div>
+      <h2>To Do</h2>
+      <p id="todoDateLabel" class="muted-label">Tasks for selected date</p>
+    </div>
+  </div>
+
+  <div id="todoComposer" class="todo-composer">
+    <span class="todo-composer-icon">＋</span>
+    <span class="todo-composer-text">Add a task for this date...</span>
+  </div>
+
+  <div id="todoList" class="todo-board"></div>
+</article>
+
+  <article class="panel tall-panel calendar-panel">
+    <div class="panel-header">
+      <h2>Calendar</h2>
+      <div class="calendar-controls">
+        <button id="prevMonthBtn" class="icon-btn" type="button" title="Previous Month">‹</button>
+        <span id="calendarMonthLabel" class="calendar-month-label">Month Year</span>
+        <button id="nextMonthBtn" class="icon-btn" type="button" title="Next Month">›</button>
+      </div>
+    </div>
+
+    <div class="calendar-widget">
+      <div class="calendar-weekdays">
+        <span>Sun</span>
+        <span>Mon</span>
+        <span>Tue</span>
+        <span>Wed</span>
+        <span>Thu</span>
+        <span>Fri</span>
+        <span>Sat</span>
+      </div>
+      <div id="calendarGrid" class="calendar-grid"></div>
+    </div>
+  </article>
+</div>
+        </section>
+
+        <!-- INBOX -->
+        <section id="inbox" class="page-section">
+  <header class="page-header">
+    <div>
+      <h1>Inbox</h1>
+    </div>
+  </header>
+
+  <div class="toolbar inbox-toolbar">
+    <div class="search-wrap">
+      <span class="search-icon">⌕</span>
+      <input id="inboxSearch" type="text" placeholder="Search..." />
+    </div>
+
+    <button id="inboxSearchBtn" class="btn btn-primary" type="button">Search</button>
+
+    <div class="filter-dropdown-wrap">
+      <button id="inboxFilterBtn" class="icon-btn" type="button" title="Filter">⏷</button>
+
+      <div id="inboxFilterMenu" class="filter-menu">
+        <button class="filter-option" type="button" data-filter="all">All Files</button>
+        <button class="filter-option" type="button" data-filter="active">Active Only</button>
+        <button class="filter-option" type="button" data-filter="missing">Missing Only</button>
+        <button class="filter-option" type="button" data-filter="audio">Audio Only</button>
+        <button class="filter-option" type="button" data-filter="document">Documents Only</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="inbox-action-bar">
+    <div class="inbox-action-left">
+      <span id="inboxSelectionLabel" class="muted-label">No file selected</span>
+    </div>
+
+    <div class="inbox-action-right">
+      <button id="inboxOpenBtn" class="btn btn-secondary" type="button">Open</button>
+      <button id="inboxRenameBtn" class="btn btn-secondary" type="button">Rename</button>
+      <button id="inboxMoveBtn" class="btn btn-secondary" type="button">Move to Project</button>
+      <button id="inboxArchiveBtn" class="btn btn-secondary" type="button">Move to Archive</button>
+      <button id="inboxDeleteBtn" class="btn btn-danger-soft" type="button">Delete</button>
+    </div>
+  </div>
+
+  <article class="panel panel-table">
+    <table class="data-table inbox-table">
+      <thead>
+        <tr>
+          <th style="width: 52px;">Select</th>
+          <th>Filename</th>
+          <th>Project</th>
+          <th>Episode</th>
+          <th>Date Received</th>
+          <th>Status</th>
+          <th>Path</th>
+        </tr>
+      </thead>
+      <tbody id="assetsTableBody"></tbody>
+    </table>
+  </article>
+</section>
+
+        <!-- PROJECTS -->
+        <section id="projects" class="page-section">
+          <header class="page-header page-header-inline">
+  <div>
+    <h1>Projects</h1>
+  </div>
+  <div class="panel-actions">
+    <button id="addFolderBtn" class="btn btn-primary" type="button">+ Add Folder</button>
+  </div>
+</header>
+
+          <div class="toolbar">
+            <div class="search-wrap">
+              <span class="search-icon">⌕</span>
+              <input id="projectsSearch" type="text" placeholder="Search..." />
+            </div>
+            <button class="icon-btn" title="Filter">⏷</button>
+          </div>
+
+          <div class="breadcrumbs" id="projectBreadcrumbs">
+            <span>Home</span>
+          </div>
+
+          <div id="projectsFolderGrid" class="folder-grid"></div>
+
+          <article class="panel panel-table section-spacer">
+            <div class="panel-header">
+              <h2>Project List</h2>
+              <span class="muted-label">Tracked project codes</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Project Code</th>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th>Assets</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody id="projectsTableBody"></tbody>
+            </table>
+          </article>
+        </section>
+
+        <!-- VOICE ARTISTS -->
+        <section id="voice-artists" class="page-section">
+          <header class="page-header page-header-inline">
+            <div>
+              <h1>Voice Artists</h1>
+            </div>
+            <button class="btn btn-primary">+ Add Talents</button>
+          </header>
+
+          <div class="toolbar">
+            <div class="search-wrap">
+              <span class="search-icon">⌕</span>
+              <input type="text" placeholder="Search for voice talents" />
+            </div>
+            <button class="icon-btn" title="Filter">⏷</button>
+          </div>
+
+          <div class="talent-grid" id="talentGrid">
+            <article class="talent-card">
+              <div class="talent-avatar"></div>
+              <h3>Noah Thompson</h3>
+              <button class="btn btn-primary btn-small">See Details</button>
+            </article>
+            <article class="talent-card">
+              <div class="talent-avatar"></div>
+              <h3>Yza Casimero</h3>
+              <button class="btn btn-primary btn-small">See Details</button>
+            </article>
+            <article class="talent-card">
+              <div class="talent-avatar"></div>
+              <h3>James Carter</h3>
+              <button class="btn btn-primary btn-small">See Details</button>
+            </article>
+            <article class="talent-card">
+              <div class="talent-avatar"></div>
+              <h3>Sophia Lee</h3>
+              <button class="btn btn-primary btn-small">See Details</button>
+            </article>
+          </div>
+        </section>
+
+        <!-- ARCHIVE -->
+        <section id="archive" class="page-section">
+          <header class="page-header">
+            <div>
+              <h1>Archive</h1>
+            </div>
+          </header>
+
+          <div class="toolbar">
+            <div class="search-wrap">
+              <span class="search-icon">⌕</span>
+              <input type="text" placeholder="Search archive..." />
+            </div>
+            <button class="icon-btn" title="Filter">⏷</button>
+          </div>
+
+          <article class="panel panel-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Filename</th>
+                  <th>Project</th>
+                  <th>Date Received</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="archiveTableBody"></tbody>
+            </table>
+          </article>
+        </section>
+
+        <!-- ANALYTICS -->
+        <section id="analytics" class="page-section">
+          <header class="page-header">
+            <div>
+              <h1>Analytics</h1>
+              <p>Intake trends, file sync events, and project volume will appear here.</p>
+            </div>
+          </header>
+
+          <div class="analytics-grid">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Watched Paths</h2>
+              </div>
+              <div id="pathsContainer" class="paths-list"></div>
+            </article>
+
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Watcher Feed</h2>
+              </div>
+              <div id="analyticsFeed" class="event-log"></div>
+            </article>
+          </div>
+        </section>
+      </main>
+    </section>
+  </div>
+
+
+  <!-- TASK MODAL -->
+<div id="taskModal" class="modal-overlay">
+  <div class="modal-card">
+
+    <div class="modal-header">
+      <h2>Add Task</h2>
+      <button id="modalCloseBtn" class="modal-close" type="button">✕</button>
+    </div>
+
+    <div class="modal-body">
+
+      <label class="modal-field">
+        <span>Date</span>
+        <input id="modalTaskDate" type="text" disabled />
+      </label>
+
+      <label class="modal-field">
+        <span>Task</span>
+        <input id="modalTaskTitle" type="text" placeholder="Enter task..." />
+      </label>
+
+      <label class="modal-field">
+        <span>Notes</span>
+        <textarea id="modalTaskNotes" rows="3" placeholder="Optional notes"></textarea>
+      </label>
+
+    </div>
+
+    <div class="modal-footer">
+      <button id="modalCancelBtn" class="btn" type="button">Cancel</button>
+      <button id="modalSaveBtn" class="btn btn-primary">Save Task</button>
+    </div>
+
+  </div>
+</div> 
+
+<div id="taskNotesModal" class="modal-overlay">
+  <div class="modal-card notes-modal-card">
+    <div class="modal-header">
+      <h2>Task Notes</h2>
+      <button id="notesModalCloseBtn" class="modal-close" type="button">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="modal-field">
+        <span>Task</span>
+        <div id="notesTaskTitle" class="notes-task-title"></div>
+      </div>
+
+      <div class="modal-field">
+        <span>Notes</span>
+        <div id="notesTaskBody" class="notes-task-body"></div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button id="notesModalDoneBtn" class="btn btn-primary" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>

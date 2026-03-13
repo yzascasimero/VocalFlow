@@ -1,0 +1,18 @@
+{
+  "name": "vocalflow",
+  "version": "1.0.0",
+  "description": "VocalFlow desktop application built with Electron, SQLite3, and Python.",
+  "main": "main.js",
+  "author": "OpenAI",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron ."
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "chokidar": "^4.0.3",
+    "electron": "^36.3.1",
+    "sqlite3": "^5.1.7"
+  }
+}
