@@ -305,12 +305,36 @@ function setupWatcher() {
   watcher
     .on("add", async (filePath) => {
       await processSingleFile(filePath, "watcher_add");
+      notifyRenderer("fs:changed", {
+        type: "file-added",
+        relativePath: path.relative(APP_ROOT, filePath)
+      });
     })
     .on("change", async (filePath) => {
       await processSingleFile(filePath, "watcher_change");
+      notifyRenderer("fs:changed", {
+        type: "file-changed",
+        relativePath: path.relative(APP_ROOT, filePath)
+      });
     })
     .on("unlink", async (filePath) => {
       await handleUnlink(filePath);
+      notifyRenderer("fs:changed", {
+        type: "file-removed",
+        relativePath: path.relative(APP_ROOT, filePath)
+      });
+    })
+    .on("addDir", async (dirPath) => {
+      notifyRenderer("fs:changed", {
+        type: "directory-added",
+        relativePath: path.relative(APP_ROOT, dirPath)
+      });
+    })
+    .on("unlinkDir", async (dirPath) => {
+      notifyRenderer("fs:changed", {
+        type: "directory-removed",
+        relativePath: path.relative(APP_ROOT, dirPath)
+      });
     })
     .on("error", (error) => {
       console.error("Watcher error:", error);

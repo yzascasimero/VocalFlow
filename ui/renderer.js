@@ -57,7 +57,6 @@ const notesTaskBody = document.getElementById("notesTaskBody");
 
 const importFilesBtn = document.getElementById("importFilesBtn");
 const importFolderBtn = document.getElementById("importFolderBtn");
-
 let calendarDate = new Date();
 let selectedDate = new Date();
 let currentProjectPath = "Projects";
@@ -1004,6 +1003,15 @@ window.vocalflowAPI?.onZipExtracted?.(async (payload) => {
   addLog(eventLog, `ZIP extracted: ${payload.zipPath}`);
   addLog(analyticsFeed, `ZIP unpacked to ${payload.extractedTo}`);
   await refreshAll();
+});
+
+window.vocalflowAPI?.onFilesystemChanged?.(async (payload) => {
+  addLog(analyticsFeed, `Filesystem changed: ${payload.type || "update"}`);
+  try {
+    await loadProjectDirectory(currentProjectPath);
+  } catch (error) {
+    console.error("Projects refresh error after fs:changed:", error);
+  }
 });
 
 bindSearch();

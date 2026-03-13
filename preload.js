@@ -1,17 +1,16 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("vocalflowAPI", {
-  
-  //dashboard
+  // Dashboard
   getPaths: () => ipcRenderer.invoke("app:get-paths"),
   getDashboardStats: () => ipcRenderer.invoke("dashboard:get-stats"),
   listAssets: () => ipcRenderer.invoke("assets:list"),
   listProjects: () => ipcRenderer.invoke("projects:list"),
-  
-  //intake
+
+  // Intake
   rescanIntake: () => ipcRenderer.invoke("intake:rescan"),
 
-  //file system
+  // File system
   listDirectory: (relativePath = "") =>
     ipcRenderer.invoke("fs:list-directory", { relativePath }),
 
@@ -33,6 +32,13 @@ contextBridge.exposeInMainWorld("vocalflowAPI", {
   openItemInExplorer: (relativePath) =>
     ipcRenderer.invoke("fs:open-item", { relativePath }),
 
+  importFiles: () =>
+    ipcRenderer.invoke("fs:import-files"),
+
+  importFolder: () =>
+    ipcRenderer.invoke("fs:import-folder"),
+
+  // Events
   onDatabaseUpdated: (callback) => {
     ipcRenderer.on("db:updated", (_event, payload) => callback(payload));
   },
