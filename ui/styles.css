@@ -1423,3 +1423,44 @@ button.calendar-day:hover {
     align-items: flex-start;
   }
 }
+
+.inbox-table {
+  margin-bottom: 0;
+}
+
+.inbox-tables-container {
+  display: flex;
+  gap: 16px;
+}
+
+.inbox-tables-container .panel {
+  flex: 1;
+}
+
+.files-panel {
+  background: linear-gradient(135deg, #f7f9ff 0%, #f0f4ff 100%);
+  border-color: #e1e8ff;
+}
+
+.files-panel .panel-header h2 {
+  color: #2563eb;
+}
+
+.folders-panel {
+  background: linear-gradient(135deg, #f7fff9 0%, #f0fff4 100%);
+  border-color: #e1ffe8;
+}
+
+.folders-panel .panel-header h2 {
+  color: #16a34a;
+}
+
+@media (max-width: 1200px) {
+  .inbox-tables-container {
+    flex-direction: column;
+  }
+}
+
+.section-spacer {
+  margin-top: 16px;
+}

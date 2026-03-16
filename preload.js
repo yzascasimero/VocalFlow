@@ -9,7 +9,8 @@ contextBridge.exposeInMainWorld("vocalflowAPI", {
 
   // Intake
   rescanIntake: () => ipcRenderer.invoke("intake:rescan"),
-
+  listIntakeFolders: () => ipcRenderer.invoke("intake:list-folders"),
+  
   // File system
   listDirectory: (relativePath = "") =>
     ipcRenderer.invoke("fs:list-directory", { relativePath }),
@@ -32,11 +33,23 @@ contextBridge.exposeInMainWorld("vocalflowAPI", {
   openItemInExplorer: (relativePath) =>
     ipcRenderer.invoke("fs:open-item", { relativePath }),
 
+  moveItems: (items, targetParentRelativePath) =>
+  ipcRenderer.invoke("fs:move-items", { items, targetParentRelativePath }),
+
+  deleteItems: (items) =>
+  ipcRenderer.invoke("fs:delete-items", { items }),
+
+  openItemsInExplorer: (items) =>
+  ipcRenderer.invoke("fs:open-items", { items }),
+
   importFiles: () =>
     ipcRenderer.invoke("fs:import-files"),
 
   importFolder: () =>
     ipcRenderer.invoke("fs:import-folder"),
+
+  selectTargetFolder: () =>
+    ipcRenderer.invoke("fs:select-target-folder"),
 
   // Events
   onDatabaseUpdated: (callback) => {

@@ -181,13 +181,14 @@
   <header class="page-header">
     <div>
       <h1>Inbox</h1>
+      <p>Review incoming files and folders, then move, archive, rename, or delete them.</p>
     </div>
   </header>
 
   <div class="toolbar inbox-toolbar">
     <div class="search-wrap">
       <span class="search-icon">⌕</span>
-      <input id="inboxSearch" type="text" placeholder="Search..." />
+      <input id="inboxSearch" type="text" placeholder="Search files or folders..." />
     </div>
 
     <button id="inboxSearchBtn" class="btn btn-primary" type="button">Search</button>
@@ -196,18 +197,18 @@
       <button id="inboxFilterBtn" class="icon-btn" type="button" title="Filter">⏷</button>
 
       <div id="inboxFilterMenu" class="filter-menu">
-        <button class="filter-option" type="button" data-filter="all">All Files</button>
+        <button class="filter-option" type="button" data-filter="all">All Items</button>
+        <button class="filter-option" type="button" data-filter="files">Files Only</button>
+        <button class="filter-option" type="button" data-filter="folders">Folders Only</button>
         <button class="filter-option" type="button" data-filter="active">Active Only</button>
         <button class="filter-option" type="button" data-filter="missing">Missing Only</button>
-        <button class="filter-option" type="button" data-filter="audio">Audio Only</button>
-        <button class="filter-option" type="button" data-filter="document">Documents Only</button>
       </div>
     </div>
   </div>
 
   <div class="inbox-action-bar">
     <div class="inbox-action-left">
-      <span id="inboxSelectionLabel" class="muted-label">No file selected</span>
+      <span id="inboxSelectionLabel" class="muted-label">No items selected</span>
     </div>
 
     <div class="inbox-action-right">
@@ -219,67 +220,97 @@
     </div>
   </div>
 
-  <article class="panel panel-table">
-    <table class="data-table inbox-table">
-      <thead>
-        <tr>
-          <th style="width: 52px;">Select</th>
-          <th>Filename</th>
-          <th>Project</th>
-          <th>Episode</th>
-          <th>Date Received</th>
-          <th>Status</th>
-          <th>Path</th>
-        </tr>
-      </thead>
-      <tbody id="assetsTableBody"></tbody>
-    </table>
-  </article>
+  <div class="inbox-tables-container">
+    <article class="panel panel-table files-panel">
+      <div class="panel-header">
+        <h2>Files</h2>
+        <span class="muted-label">Incoming files</span>
+      </div>
+
+      <table class="data-table inbox-table">
+        <thead>
+          <tr>
+            <th style="width: 52px;">Select</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Date Received</th>
+            <th>Status</th>
+            <th>Path</th>
+          </tr>
+        </thead>
+        <tbody id="inboxFilesTableBody"></tbody>
+      </table>
+    </article>
+
+    <article class="panel panel-table folders-panel">
+      <div class="panel-header">
+        <h2>Folders</h2>
+        <span class="muted-label">Incoming folders</span>
+      </div>
+
+      <table class="data-table inbox-table">
+        <thead>
+          <tr>
+            <th style="width: 52px;">Select</th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Date Received</th>
+            <th>Status</th>
+            <th>Path</th>
+          </tr>
+        </thead>
+        <tbody id="inboxFoldersTableBody"></tbody>
+      </table>
+    </article>
+  </div>
 </section>
 
         <!-- PROJECTS -->
-        <header class="page-header page-header-inline">
-  <div>
-    <h1>Projects</h1>
+<section id="projects" class="page-section">
+  <header class="page-header page-header-inline">
+    <div>
+      <h1>Projects</h1>
+    </div>
+    <div class="panel-actions">
+      <button id="importFilesBtn" class="btn btn-primary" type="button">Import Files</button>
+      <button id="importFolderBtn" class="btn btn-primary" type="button">Import Folder</button>
+      <button id="addFolderBtn" class="btn btn-primary" type="button">+ Add Folder</button>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="search-wrap">
+      <span class="search-icon">⌕</span>
+      <input id="projectsSearch" type="text" placeholder="Search..." />
+    </div>
+    <button class="icon-btn" title="Filter" type="button">⏷</button>
   </div>
-  <div class="panel-actions">
-    <button id="addFolderBtn" class="btn btn-primary" type="button">+ Add Folder</button>
+
+  <div class="breadcrumbs" id="projectBreadcrumbs">
+    <span>Home</span>
   </div>
-</header>
 
-          <div class="toolbar">
-            <div class="search-wrap">
-              <span class="search-icon">⌕</span>
-              <input id="projectsSearch" type="text" placeholder="Search..." />
-            </div>
-            <button class="icon-btn" title="Filter">⏷</button>
-          </div>
+  <div id="projectsFolderGrid" class="folder-grid"></div>
 
-          <div class="breadcrumbs" id="projectBreadcrumbs">
-            <span>Home</span>
-          </div>
-
-          <div id="projectsFolderGrid" class="folder-grid"></div>
-
-          <article class="panel panel-table section-spacer">
-            <div class="panel-header">
-              <h2>Project List</h2>
-              <span class="muted-label">Tracked project codes</span>
-            </div>
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Project Code</th>
-                  <th>Name</th>
-                  <th>Status</th>
-                  <th>Assets</th>
-                  <th>Updated</th>
-                </tr>
-              </thead>
-              <tbody id="projectsTableBody"></tbody>
-            </table>
-          </article>
-        </section>
+  <article class="panel panel-table section-spacer">
+    <div class="panel-header">
+      <h2>Project List</h2>
+      <span class="muted-label">Tracked project codes</span>
+    </div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Project Code</th>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Assets</th>
+          <th>Updated</th>
+        </tr>
+      </thead>
+      <tbody id="projectsTableBody"></tbody>
+    </table>
+  </article>
+</section>
 
         <!-- VOICE ARTISTS -->
         <section id="voice-artists" class="page-section">
@@ -343,7 +374,6 @@
               <thead>
                 <tr>
                   <th>Filename</th>
-                  <th>Project</th>
                   <th>Date Received</th>
                   <th>Status</th>
                 </tr>
@@ -441,6 +471,81 @@
     <div class="modal-footer">
       <button id="notesModalDoneBtn" class="btn btn-primary" type="button">Done</button>
     </div>
+  </div>
+</div>
+
+<div id="renameModal" class="modal-overlay">
+  <div class="modal-card">
+
+    <div class="modal-header">
+      <h2>Rename Item</h2>
+      <button id="renameModalCloseBtn" class="modal-close" type="button">✕</button>
+    </div>
+
+    <div class="modal-body">
+
+      <label class="modal-field">
+        <span>New Name</span>
+        <input id="renameInput" type="text" placeholder="Enter new name..." />
+      </label>
+
+    </div>
+
+    <div class="modal-footer">
+      <button id="renameModalCancelBtn" class="btn" type="button">Cancel</button>
+      <button id="renameModalSaveBtn" class="btn btn-primary">Rename</button>
+    </div>
+
+  </div>
+</div>
+
+<div id="moveModal" class="modal-overlay">
+  <div class="modal-card">
+
+    <div class="modal-header">
+      <h2>Move to Project</h2>
+      <button id="moveModalCloseBtn" class="modal-close" type="button">✕</button>
+    </div>
+
+    <div class="modal-body">
+
+      <label class="modal-field">
+        <span>Target Folder</span>
+        <input id="moveInput" type="text" placeholder="Projects/MyClient" />
+      </label>
+
+    </div>
+
+    <div class="modal-footer">
+      <button id="moveModalCancelBtn" class="btn" type="button">Cancel</button>
+      <button id="moveModalSaveBtn" class="btn btn-primary">Move</button>
+    </div>
+
+  </div>
+</div>
+
+<div id="addFolderModal" class="modal-overlay">
+  <div class="modal-card">
+
+    <div class="modal-header">
+      <h2>Add Folder</h2>
+      <button id="addFolderModalCloseBtn" class="modal-close" type="button">✕</button>
+    </div>
+
+    <div class="modal-body">
+
+      <label class="modal-field">
+        <span>Folder Name</span>
+        <input id="addFolderInput" type="text" placeholder="New folder name..." />
+      </label>
+
+    </div>
+
+    <div class="modal-footer">
+      <button id="addFolderModalCancelBtn" class="btn" type="button">Cancel</button>
+      <button id="addFolderModalSaveBtn" class="btn btn-primary">Create</button>
+    </div>
+
   </div>
 </div>
 

@@ -25,6 +25,8 @@ const inboxFilterMenu = document.getElementById("inboxFilterMenu");
 const inboxFilterOptions = document.querySelectorAll(".filter-option");
 const projectsSearch = document.getElementById("projectsSearch");
 
+const inboxFilesTableBody = document.getElementById("inboxFilesTableBody");
+const inboxFoldersTableBody = document.getElementById("inboxFoldersTableBody");
 const inboxSelectionLabel = document.getElementById("inboxSelectionLabel");
 const inboxOpenBtn = document.getElementById("inboxOpenBtn");
 const inboxRenameBtn = document.getElementById("inboxRenameBtn");
@@ -55,13 +57,33 @@ const notesModalDoneBtn = document.getElementById("notesModalDoneBtn");
 const notesTaskTitle = document.getElementById("notesTaskTitle");
 const notesTaskBody = document.getElementById("notesTaskBody");
 
+const renameModal = document.getElementById("renameModal");
+const renameModalCloseBtn = document.getElementById("renameModalCloseBtn");
+const renameModalCancelBtn = document.getElementById("renameModalCancelBtn");
+const renameModalSaveBtn = document.getElementById("renameModalSaveBtn");
+const renameInput = document.getElementById("renameInput");
+
+const moveModal = document.getElementById("moveModal");
+const moveModalCloseBtn = document.getElementById("moveModalCloseBtn");
+const moveModalCancelBtn = document.getElementById("moveModalCancelBtn");
+const moveModalSaveBtn = document.getElementById("moveModalSaveBtn");
+const moveInput = document.getElementById("moveInput");
+
+const addFolderModal = document.getElementById("addFolderModal");
+const addFolderModalCloseBtn = document.getElementById("addFolderModalCloseBtn");
+const addFolderModalCancelBtn = document.getElementById("addFolderModalCancelBtn");
+const addFolderModalSaveBtn = document.getElementById("addFolderModalSaveBtn");
+const addFolderInput = document.getElementById("addFolderInput");
+
 const importFilesBtn = document.getElementById("importFilesBtn");
 const importFolderBtn = document.getElementById("importFolderBtn");
 let calendarDate = new Date();
 let selectedDate = new Date();
 let currentProjectPath = "Projects";
 let currentInboxFilter = "all";
-let selectedInboxAssetPath = null;
+
+let selectedInboxItems = new Set();
+let cachedInboxFolders = [];
 
 const TODO_STORAGE_KEY = "vocalflow_todos_v1";
 let todoStore = loadTodos();
@@ -126,23 +148,39 @@ function getRelativePathFromAbsolute(fullPath) {
   return normalized.slice(idx + marker.length);
 }
 
-function getSelectedInboxAsset() {
-  return cachedAssets.find((asset) => asset.file_path === selectedInboxAssetPath) || null;
+function getAllInboxItems() {
+  return [
+    ...cachedAssets.map((item) => ({ ...item, is_directory: false })),
+    ...cachedInboxFolders
+  ];
+}
+
+function getSelectedInboxItems() {
+  const allItems = [
+    ...cachedAssets.map((item) => ({ ...item, is_directory: false })),
+    ...cachedInboxFolders
+  ];
+
+  return allItems.filter((item) => selectedInboxItems.has(item.relative_path));
 }
 
 function updateInboxActionState() {
-  const selected = getSelectedInboxAsset();
+  const selected = getSelectedInboxItems();
 
   if (inboxSelectionLabel) {
-    inboxSelectionLabel.textContent = selected
-      ? `Selected: ${selected.file_name}`
-      : "No file selected";
+    inboxSelectionLabel.textContent = selected.length
+      ? `${selected.length} item(s) selected`
+      : "No items selected";
   }
 
-  const disabled = !selected;
+  const disabled = selected.length === 0;
   [inboxOpenBtn, inboxRenameBtn, inboxMoveBtn, inboxArchiveBtn, inboxDeleteBtn].forEach((btn) => {
     if (btn) btn.disabled = disabled;
   });
+
+  if (inboxRenameBtn) {
+    inboxRenameBtn.disabled = selected.length !== 1;
+  }
 }
 
 function switchSection(sectionId) {
@@ -201,53 +239,77 @@ function renderActionList(assets) {
   `).join("");
 }
 
-function renderAssets(assets) {
-  if (!assetsTableBody || !archiveTableBody) return;
+function renderInboxTables(files, folders) {
+  if (!inboxFilesTableBody || !inboxFoldersTableBody || !archiveTableBody) return;
 
-  if (!assets.length) {
-    assetsTableBody.innerHTML = `
+  if (!files.length) {
+    inboxFilesTableBody.innerHTML = `
       <tr>
-        <td colspan="7" class="empty-table">No files found.</td>
+        <td colspan="6" class="empty-table">No files found.</td>
       </tr>
     `;
   } else {
-    assetsTableBody.innerHTML = assets.map((asset) => `
-      <tr class="${asset.file_path === selectedInboxAssetPath ? "selected-row" : ""}" data-path="${escapeHtml(asset.file_path)}">
+    inboxFilesTableBody.innerHTML = files.map((item) => `
+      <tr class="${selectedInboxItems.has(item.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(item.relative_path)}">
         <td>
           <input
             class="asset-select"
-            type="radio"
-            name="selectedInboxAsset"
-            ${asset.file_path === selectedInboxAssetPath ? "checked" : ""}
+            type="checkbox"
+            ${selectedInboxItems.has(item.relative_path) ? "checked" : ""}
           />
         </td>
-        <td>${escapeHtml(asset.file_name)}</td>
-        <td>${escapeHtml(asset.project_code || "-")}</td>
-        <td>${escapeHtml(asset.episode_number || "-")}</td>
-        <td>${formatDate(asset.updated_at)}</td>
+        <td>${escapeHtml(item.file_name)}</td>
+        <td>${escapeHtml(item.asset_type || item.extension || "file")}</td>
+        <td>${formatDate(item.updated_at)}</td>
         <td>
-          <span class="status-chip ${asset.is_missing ? "danger" : "success"}">
-            ${asset.is_missing ? "Missing" : "Active"}
+          <span class="status-chip ${item.is_missing ? "danger" : "success"}">
+            ${item.is_missing ? "Missing" : "Active"}
           </span>
         </td>
-        <td class="path-muted">${escapeHtml(asset.relative_path || asset.file_path)}</td>
+        <td class="path-muted">${escapeHtml(item.relative_path)}</td>
       </tr>
     `).join("");
   }
 
-  const archived = assets.filter((asset) => asset.is_missing);
+  if (!folders.length) {
+    inboxFoldersTableBody.innerHTML = `
+      <tr>
+        <td colspan="6" class="empty-table">No folders found.</td>
+      </tr>
+    `;
+  } else {
+    inboxFoldersTableBody.innerHTML = folders.map((item) => `
+      <tr class="${selectedInboxItems.has(item.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(item.relative_path)}">
+        <td>
+          <input
+            class="asset-select"
+            type="checkbox"
+            ${selectedInboxItems.has(item.relative_path) ? "checked" : ""}
+          />
+        </td>
+        <td>${escapeHtml(item.name)}</td>
+        <td>folder</td>
+        <td>${formatDate(item.updated_at)}</td>
+        <td>
+          <span class="status-chip success">Active</span>
+        </td>
+        <td class="path-muted">${escapeHtml(item.relative_path)}</td>
+      </tr>
+    `).join("");
+  }
+
+  const archived = cachedAssets.filter((asset) => asset.is_missing);
   archiveTableBody.innerHTML = archived.length
     ? archived.map((asset) => `
       <tr>
         <td>${escapeHtml(asset.file_name)}</td>
-        <td>${escapeHtml(asset.project_code || "-")}</td>
         <td>${formatDate(asset.updated_at)}</td>
         <td><span class="status-chip danger">Archived / Missing</span></td>
       </tr>
     `).join("")
     : `
       <tr>
-        <td colspan="4" class="empty-table">No archived or missing files.</td>
+        <td colspan="3" class="empty-table">No archived or missing files.</td>
       </tr>
     `;
 
@@ -367,11 +429,7 @@ async function loadData() {
 
   cachedAssets = await window.vocalflowAPI.listAssets();
   cachedProjects = await window.vocalflowAPI.listProjects();
-
-  const stillExists = cachedAssets.some((asset) => asset.file_path === selectedInboxAssetPath);
-  if (!stillExists) {
-    selectedInboxAssetPath = null;
-  }
+  cachedInboxFolders = await window.vocalflowAPI.listIntakeFolders();
 
   applyInboxFilters();
   renderProjects(cachedProjects);
@@ -380,6 +438,18 @@ async function loadData() {
 
 async function refreshAll() {
   await Promise.all([loadStats(), loadData(), loadPaths()]);
+}
+
+function handleInboxSelection(path, checked) {
+  if (!path) return;
+
+  if (checked) {
+    selectedInboxItems.add(path);
+  } else {
+    selectedInboxItems.delete(path);
+  }
+
+  applyInboxFilters();
 }
 
 function openTaskModal() {
@@ -409,6 +479,65 @@ function openNotesModal(todo) {
 
 function closeNotesModal() {
   taskNotesModal?.classList.remove("active");
+}
+
+function openRenameModal(currentName, callback) {
+  if (!renameModal || !renameInput) return;
+
+  renameInput.value = currentName;
+  renameModal.classList.add("active");
+
+  setTimeout(() => {
+    renameInput.focus();
+    renameInput.select();
+  }, 50);
+
+  // Store the callback
+  renameModal.callback = callback;
+}
+
+function closeRenameModal() {
+  renameModal?.classList.remove("active");
+  if (renameInput) renameInput.value = "";
+}
+
+function openMoveModal(callback) {
+  if (!moveModal || !moveInput) return;
+
+  moveInput.value = "Projects/";
+  moveModal.classList.add("active");
+
+  setTimeout(() => {
+    moveInput.focus();
+    moveInput.setSelectionRange(9, 9); // Select after "Projects/"
+  }, 50);
+
+  // Store the callback
+  moveModal.callback = callback;
+}
+
+function closeMoveModal() {
+  moveModal?.classList.remove("active");
+  if (moveInput) moveInput.value = "";
+}
+
+function openAddFolderModal(callback) {
+  if (!addFolderModal || !addFolderInput) return;
+
+  addFolderInput.value = "";
+  addFolderModal.classList.add("active");
+
+  setTimeout(() => {
+    addFolderInput.focus();
+  }, 50);
+
+  // Store the callback
+  addFolderModal.callback = callback;
+}
+
+function closeAddFolderModal() {
+  addFolderModal?.classList.remove("active");
+  if (addFolderInput) addFolderInput.value = "";
 }
 
 function loadTodos() {
@@ -556,38 +685,45 @@ function renderCalendar(date) {
 
 function applyInboxFilters() {
   const query = (inboxSearch?.value || "").toLowerCase().trim();
-  let filtered = [...cachedAssets];
+
+  let files = [...cachedAssets].map((item) => ({ ...item, is_directory: false }));
+  let folders = [...cachedInboxFolders];
 
   if (query) {
-    filtered = filtered.filter((asset) =>
-      [
-        asset.file_name,
-        asset.project_code,
-        asset.episode_number,
-        asset.file_path,
-        asset.asset_type
-      ]
+    files = files.filter((item) =>
+      [item.file_name, item.file_path, item.relative_path, item.asset_type]
+        .filter(Boolean)
+        .some((v) => String(v).toLowerCase().includes(query))
+    );
+
+    folders = folders.filter((item) =>
+      [item.name, item.file_path, item.relative_path]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(query))
     );
   }
 
-  if (currentInboxFilter === "active") {
-    filtered = filtered.filter((asset) => !asset.is_missing);
+  if (currentInboxFilter === "files") {
+    folders = [];
+  } else if (currentInboxFilter === "folders") {
+    files = [];
+  } else if (currentInboxFilter === "active") {
+    files = files.filter((item) => !item.is_missing);
   } else if (currentInboxFilter === "missing") {
-    filtered = filtered.filter((asset) => asset.is_missing);
-  } else if (currentInboxFilter === "audio") {
-    filtered = filtered.filter((asset) => asset.asset_type === "audio");
-  } else if (currentInboxFilter === "document") {
-    filtered = filtered.filter((asset) => asset.asset_type === "document");
+    folders = [];
+    files = files.filter((item) => item.is_missing);
   }
 
-  const selectedStillVisible = filtered.some((asset) => asset.file_path === selectedInboxAssetPath);
-  if (!selectedStillVisible) {
-    selectedInboxAssetPath = null;
-  }
+  const visiblePaths = new Set([
+    ...files.map((item) => item.relative_path),
+    ...folders.map((item) => item.relative_path)
+  ]);
 
-  renderAssets(filtered);
+  selectedInboxItems = new Set(
+    [...selectedInboxItems].filter((path) => visiblePaths.has(path))
+  );
+
+  renderInboxTables(files, folders);
 }
 
 function toggleInboxFilterMenu() {
@@ -652,28 +788,101 @@ function bindSearch() {
   }
 }
 
-async function moveSelectedInboxAsset(targetRelativeFolder) {
-  const selected = getSelectedInboxAsset();
-  if (!selected) {
-    showMessage("Select a file first.");
+async function moveSelectedInboxItems(targetRelativeFolder) {
+  const selected = getSelectedInboxItems();
+
+  if (!selected.length) {
+    showMessage("Select at least one file or folder first.");
     return;
   }
 
-  const sourceRelativePath = getRelativePathFromAbsolute(selected.file_path);
-  if (!sourceRelativePath) {
-    showMessage("Unable to resolve source file path.");
+  const relativePaths = selected.map((item) => item.relative_path);
+
+  const result = await window.vocalflowAPI.moveItems(
+    relativePaths,
+    targetRelativeFolder
+  );
+
+  if (!result?.ok) {
+    showMessage(result?.error || "Move failed.");
     return;
   }
 
-  const result = await window.vocalflowAPI.moveItem(sourceRelativePath, targetRelativeFolder);
-  if (!result.ok) {
-    showMessage(result.error || "Move failed.");
-    return;
+  selectedInboxItems.clear();
+
+  const movedCount = result.moved?.length || relativePaths.length;
+
+  if (targetRelativeFolder === "Archive") {
+    alert(`${movedCount} item(s) moved to Archive.`);
+  } else {
+    const openNow = confirm(
+      `${movedCount} item(s) moved to ${targetRelativeFolder}.\n\nOpen that folder now?`
+    );
+
+    if (openNow) {
+      await window.vocalflowAPI.openItemInExplorer(targetRelativeFolder);
+    }
   }
 
-  addLog(eventLog, `Moved ${selected.file_name} to ${targetRelativeFolder}`);
   await refreshAll();
+  await loadProjectDirectory("Projects");
 }
+
+async function deleteSelectedInboxItems() {
+  const selected = getSelectedInboxItems();
+
+  if (!selected.length) {
+    showMessage("Select at least one file or folder first.");
+    return;
+  }
+
+  const confirmed = confirm(`Are you sure you want to delete ${selected.length} item(s)? This action cannot be undone.`);
+
+  if (!confirmed) return;
+
+  const relativePaths = selected.map((item) => item.relative_path);
+
+  const result = await window.vocalflowAPI.deleteItems(relativePaths);
+
+  if (!result?.ok) {
+    showMessage(result?.error || "Delete failed.");
+    return;
+  }
+
+  selectedInboxItems.clear();
+
+  const deletedCount = result.deleted?.length || relativePaths.length;
+
+  alert(`${deletedCount} item(s) deleted.`);
+
+  await refreshAll();
+  await loadProjectDirectory("Projects");
+}
+
+//move button
+
+inboxMoveBtn?.addEventListener("click", async () => {
+  const result = await window.vocalflowAPI.selectTargetFolder();
+
+  if (!result?.ok) {
+    if (!result?.canceled) {
+      showMessage(result?.error || "Failed to select folder.");
+    }
+    return;
+  }
+
+  await moveSelectedInboxItems(result.relativePath);
+});
+
+//archive
+inboxArchiveBtn?.addEventListener("click", async () => {
+  await moveSelectedInboxItems("Archive");
+});
+
+//delete
+inboxDeleteBtn?.addEventListener("click", async () => {
+  await deleteSelectedInboxItems();
+});
 
 loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -758,6 +967,54 @@ taskNotesModal?.addEventListener("click", (e) => {
   if (e.target === taskNotesModal) closeNotesModal();
 });
 
+renameModalCloseBtn?.addEventListener("click", closeRenameModal);
+renameModalCancelBtn?.addEventListener("click", closeRenameModal);
+renameModalSaveBtn?.addEventListener("click", () => {
+  const newName = renameInput?.value.trim();
+  if (!newName) return;
+
+  if (renameModal.callback) {
+    renameModal.callback(newName);
+  }
+  closeRenameModal();
+});
+
+renameModal?.addEventListener("click", (e) => {
+  if (e.target === renameModal) closeRenameModal();
+});
+
+moveModalCloseBtn?.addEventListener("click", closeMoveModal);
+moveModalCancelBtn?.addEventListener("click", closeMoveModal);
+moveModalSaveBtn?.addEventListener("click", () => {
+  const target = moveInput?.value.trim();
+  if (!target) return;
+
+  if (moveModal.callback) {
+    moveModal.callback(target);
+  }
+  closeMoveModal();
+});
+
+moveModal?.addEventListener("click", (e) => {
+  if (e.target === moveModal) closeMoveModal();
+});
+
+addFolderModalCloseBtn?.addEventListener("click", closeAddFolderModal);
+addFolderModalCancelBtn?.addEventListener("click", closeAddFolderModal);
+addFolderModalSaveBtn?.addEventListener("click", () => {
+  const folderName = addFolderInput?.value.trim();
+  if (!folderName) return;
+
+  if (addFolderModal.callback) {
+    addFolderModal.callback(folderName);
+  }
+  closeAddFolderModal();
+});
+
+addFolderModal?.addEventListener("click", (e) => {
+  if (e.target === addFolderModal) closeAddFolderModal();
+});
+
 modalTaskTitle?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
@@ -798,91 +1055,73 @@ todoList?.addEventListener("change", (e) => {
   }
 });
 
-assetsTableBody?.addEventListener("click", (e) => {
-  const row = e.target.closest("tr[data-path]");
-  if (!row) return;
-
-  selectedInboxAssetPath = row.dataset.path;
-  applyInboxFilters();
-});
-
-assetsTableBody?.addEventListener("change", (e) => {
-  const row = e.target.closest("tr[data-path]");
-  if (!row) return;
-
-  if (e.target.matches(".asset-select")) {
-    selectedInboxAssetPath = row.dataset.path;
-    applyInboxFilters();
-  }
-});
-
 inboxOpenBtn?.addEventListener("click", async () => {
-  const selected = getSelectedInboxAsset();
-  if (!selected) return;
+  const selected = getSelectedInboxItems();
+  if (!selected.length) return;
 
-  const relativePath = getRelativePathFromAbsolute(selected.file_path);
-  if (!relativePath) {
-    showMessage("Unable to resolve file path.");
-    return;
+  const relativePaths = selected.map((item) => item.relative_path);
+  const result = await window.vocalflowAPI.openItemsInExplorer(relativePaths);
+
+  if (!result?.ok) {
+    showMessage(result?.error || "Open failed.");
   }
-
-  await window.vocalflowAPI.openItemInExplorer(relativePath);
 });
 
 inboxRenameBtn?.addEventListener("click", async () => {
-  const selected = getSelectedInboxAsset();
-  if (!selected) return;
+  const selected = getSelectedInboxItems();
 
-  const relativePath = getRelativePathFromAbsolute(selected.file_path);
-  if (!relativePath) {
-    showMessage("Unable to resolve file path.");
+  if (selected.length !== 1) {
+    showMessage("Please select exactly one item to rename.");
     return;
   }
 
-  const currentName = selected.file_name;
-  const newName = window.prompt("Enter a new name:", currentName);
-  if (!newName) return;
+  const item = selected[0];
 
-  const result = await window.vocalflowAPI.renameItem(relativePath, newName);
-  if (!result.ok) {
-    showMessage(result.error || "Rename failed.");
-    return;
-  }
+  const currentName =
+    item.is_directory
+      ? item.name || item.relative_path.split("/").pop()
+      : item.file_name || item.relative_path.split("/").pop();
 
-  await refreshAll();
+  openRenameModal(currentName, async (newName) => {
+    const relativePath = item.relative_path;
+
+    const result = await window.vocalflowAPI.renameItem(relativePath, newName.trim());
+
+    if (!result?.ok) {
+      showMessage(result?.error || "Rename failed.");
+      return;
+    }
+
+    selectedInboxItems.clear();
+
+    alert(`Renamed "${currentName}" to "${newName.trim()}".`);
+
+    await refreshAll();
+    await loadProjectDirectory("Projects");
+  });
 });
 
-inboxMoveBtn?.addEventListener("click", async () => {
-  const target = window.prompt("Move selected file to which project folder?\nExample: Projects/MyClient");
-  if (!target) return;
-  await moveSelectedInboxAsset(target);
-});
+[inboxFilesTableBody, inboxFoldersTableBody].forEach((tableBody) => {
+  tableBody?.addEventListener("click", (e) => {
+    const row = e.target.closest("tr[data-path]");
+    if (!row) return;
 
-inboxArchiveBtn?.addEventListener("click", async () => {
-  await moveSelectedInboxAsset("Archive");
-});
+    if (!e.target.matches(".asset-select")) {
+      const path = row.dataset.path;
+      const isSelected = selectedInboxItems.has(path);
 
-inboxDeleteBtn?.addEventListener("click", async () => {
-  const selected = getSelectedInboxAsset();
-  if (!selected) return;
+      handleInboxSelection(path, !isSelected);
+    }
+  });
 
-  const confirmed = window.confirm(`Delete "${selected.file_name}"? This cannot be undone.`);
-  if (!confirmed) return;
+  tableBody?.addEventListener("change", (e) => {
+    const row = e.target.closest("tr[data-path]");
+    if (!row) return;
 
-  const relativePath = getRelativePathFromAbsolute(selected.file_path);
-  if (!relativePath) {
-    showMessage("Unable to resolve file path.");
-    return;
-  }
-
-  const result = await window.vocalflowAPI.deleteItem(relativePath);
-  if (!result.ok) {
-    showMessage(result.error || "Delete failed.");
-    return;
-  }
-
-  selectedInboxAssetPath = null;
-  await refreshAll();
+    if (e.target.matches(".asset-select")) {
+      handleInboxSelection(row.dataset.path, e.target.checked);
+    }
+  });
 });
 
 projectsFolderGrid?.addEventListener("click", async (e) => {
@@ -910,25 +1149,28 @@ projectsFolderGrid?.addEventListener("click", async (e) => {
   }
 
   if (action === "rename") {
-    const currentName = relativePath.split(/[/\\]/).pop();
-    const newName = window.prompt("Enter a new name:", currentName);
-    if (!newName) return;
+    const currentName = relativePath.split("/").pop();
 
-    const result = await window.vocalflowAPI.renameItem(relativePath, newName);
-    if (!result.ok) {
-      showMessage(result.error || "Rename failed.");
-      return;
-    }
+    openRenameModal(currentName, async (newName) => {
+      const result = await window.vocalflowAPI.renameItem(relativePath, newName);
 
-    await loadProjectDirectory(currentProjectPath);
+      if (!result.ok) {
+        showMessage(result.error || "Rename failed.");
+        return;
+      }
+
+      await loadProjectDirectory(currentProjectPath);
+    });
     return;
   }
 
   if (action === "delete") {
-    const confirmed = window.confirm(`Delete "${relativePath}"? This cannot be undone.`);
+    const confirmed = confirm(`Delete "${relativePath}"?`);
+
     if (!confirmed) return;
 
     const result = await window.vocalflowAPI.deleteItem(relativePath);
+
     if (!result.ok) {
       showMessage(result.error || "Delete failed.");
       return;
@@ -938,26 +1180,80 @@ projectsFolderGrid?.addEventListener("click", async (e) => {
   }
 });
 
-projectBreadcrumbs?.addEventListener("click", async (e) => {
-  const btn = e.target.closest(".crumb-btn");
-  if (!btn) return;
+//breadcrumbs
+projectsFolderGrid?.addEventListener("click", async (e) => {
+  const card = e.target.closest(".folder-card");
+  if (!card) return;
 
-  const relativePath = btn.dataset.path || "";
-  await loadProjectDirectory(relativePath);
-});
+  const relativePath = card.dataset.path;
+  const isDirectory = card.dataset.dir === "1";
+  const action = e.target.dataset.action;
 
-addFolderBtn?.addEventListener("click", async () => {
-  const folderName = window.prompt("New folder name:");
-  if (!folderName) return;
-
-  const result = await window.vocalflowAPI.createFolder(currentProjectPath, folderName);
-  if (!result.ok) {
-    showMessage(result.error || "Failed to create folder.");
+  if (!action) {
+    if (isDirectory) {
+      await loadProjectDirectory(relativePath);
+    }
     return;
   }
 
-  await loadProjectDirectory(currentProjectPath);
+  if (action === "open") {
+    if (isDirectory) {
+      await loadProjectDirectory(relativePath);
+    } else {
+      await window.vocalflowAPI.openItemInExplorer(relativePath);
+    }
+    return;
+  }
+
+  if (action === "rename") {
+    const currentName = relativePath.split("/").pop();
+
+    openRenameModal(currentName, async (newName) => {
+      const result = await window.vocalflowAPI.renameItem(relativePath, newName);
+
+      if (!result.ok) {
+        showMessage(result.error || "Rename failed.");
+        return;
+      }
+
+      await loadProjectDirectory(currentProjectPath);
+    });
+    return;
+  }
+
+  if (action === "delete") {
+    const confirmed = confirm(`Delete "${relativePath}"?`);
+
+    if (!confirmed) return;
+
+    const result = await window.vocalflowAPI.deleteItem(relativePath);
+
+    if (!result.ok) {
+      showMessage(result.error || "Delete failed.");
+      return;
+    }
+
+    await loadProjectDirectory(currentProjectPath);
+  }
 });
+
+//create folder
+addFolderBtn?.addEventListener("click", async () => {
+  openAddFolderModal(async (folderName) => {
+    const result = await window.vocalflowAPI.createFolder(
+      currentProjectPath,
+      folderName
+    );
+
+    if (!result.ok) {
+      showMessage(result.error || "Failed to create folder.");
+      return;
+    }
+
+    await loadProjectDirectory(currentProjectPath);
+  });
+});
+
 
 window.vocalflowAPI?.onDatabaseUpdated?.(async (payload) => {
   addLog(eventLog, `Database updated for ${payload.filePath}`);
@@ -965,6 +1261,7 @@ window.vocalflowAPI?.onDatabaseUpdated?.(async (payload) => {
   await refreshAll();
 });
 
+//import files
 importFilesBtn?.addEventListener("click", async () => {
   const result = await window.vocalflowAPI.importFiles();
 
@@ -976,9 +1273,11 @@ importFilesBtn?.addEventListener("click", async () => {
   }
 
   alert(`Imported ${result.files.length} file(s).`);
+
   await refreshAll();
 });
 
+//import folder
 importFolderBtn?.addEventListener("click", async () => {
   const result = await window.vocalflowAPI.importFolder();
 
@@ -989,7 +1288,8 @@ importFolderBtn?.addEventListener("click", async () => {
     return;
   }
 
-  alert("Folder imported successfully.");
+  alert(`Imported folder successfully.`);
+
   await refreshAll();
 });
 
@@ -1000,12 +1300,10 @@ window.vocalflowAPI?.onZipExtracted?.(async (payload) => {
 });
 
 window.vocalflowAPI?.onFilesystemChanged?.(async (payload) => {
-  addLog(analyticsFeed, `Filesystem changed: ${payload.type || "update"}`);
-  try {
-    await loadProjectDirectory(currentProjectPath);
-  } catch (error) {
-    console.error("Projects refresh error after fs:changed:", error);
-  }
+  addLog(analyticsFeed, `Filesystem changed: ${payload?.type || "update"}`);
+
+  await refreshAll();
+  await loadProjectDirectory(currentProjectPath || "Projects");
 });
 
 bindSearch();

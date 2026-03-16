@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const chokidar = require("chokidar");
 const AdmZip = require("adm-zip");
 const { spawn } = require("child_process");
+const VOCALFLOW_ROOT = path.join(app.getPath("documents"), "VocalFlow");
 
 const {
   initDatabase,
@@ -467,7 +468,11 @@ ipcMain.handle("fs:rename-item", async (_event, { relativePath, newName }) => {
     const targetPath = path.join(parentDir, safeName);
 
     if (normalizePath(sourcePath) === normalizePath(targetPath)) {
-      return { ok: true, relativePath };
+      return {
+        ok: true,
+        oldRelativePath: relativePath,
+        newRelativePath: relativePath
+      };
     }
 
     if (await safeStat(targetPath)) {
@@ -475,6 +480,16 @@ ipcMain.handle("fs:rename-item", async (_event, { relativePath, newName }) => {
     }
 
     await fsp.rename(sourcePath, targetPath);
+
+    if (sourceStat.isDirectory()) {
+      const renamedFiles = await walkDirectory(targetPath);
+      for (const filePath of renamedFiles) {
+        await processSingleFile(filePath, "rename_item");
+      }
+    } else {
+      await processSingleFile(targetPath, "rename_item");
+      await handleUnlink(sourcePath);
+    }
 
     notifyRenderer("fs:changed", {
       type: "item-renamed",
@@ -488,6 +503,7 @@ ipcMain.handle("fs:rename-item", async (_event, { relativePath, newName }) => {
       newRelativePath: path.relative(APP_ROOT, targetPath)
     };
   } catch (error) {
+    console.error("Rename error:", error);
     return { ok: false, error: error.message };
   }
 });
@@ -569,6 +585,23 @@ ipcMain.handle("fs:open-item", async (_event, { relativePath }) => {
   }
 });
 
+ipcMain.handle("fs:open-items", async (_event, { items }) => {
+  try {
+    for (const relativePath of items) {
+      const targetPath = resolveManagedPath(relativePath);
+      const stat = await safeStat(targetPath);
+
+      if (!stat) continue;
+
+      await shell.openPath(targetPath);
+    }
+
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
 ipcMain.handle("fs:import-files", async () => {
   try {
     const result = await dialog.showOpenDialog({
@@ -581,7 +614,7 @@ ipcMain.handle("fs:import-files", async () => {
 
     for (const file of result.filePaths) {
       const fileName = path.basename(file);
-      const destination = path.join(PROJECTS_DIR, fileName);
+      const destination = path.join(INTAKE_DIR, fileName);
 
       if (await safeStat(destination)) {
         throw new Error(`File already exists: ${fileName}`);
@@ -613,7 +646,7 @@ ipcMain.handle("fs:import-folder", async () => {
 
     const sourceFolder = result.filePaths[0];
     const folderName = path.basename(sourceFolder);
-    const destination = path.join(PROJECTS_DIR, folderName);
+    const destination = path.join(INTAKE_DIR, folderName);
 
     if (await safeStat(destination)) {
       throw new Error(`Folder already exists: ${folderName}`);
@@ -634,6 +667,135 @@ ipcMain.handle("fs:import-folder", async () => {
     return { ok: true, folder: destination };
   } catch (error) {
     return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("fs:move-items", async (_event, { items, targetParentRelativePath }) => {
+  try {
+    const targetParentPath = resolveManagedPath(targetParentRelativePath || "");
+    const targetParentStat = await safeStat(targetParentPath);
+
+    if (!targetParentStat || !targetParentStat.isDirectory()) {
+      throw new Error("Target folder not found.");
+    }
+
+    const moved = [];
+
+    for (const relativePath of items) {
+      const sourcePath = resolveManagedPath(relativePath);
+      const sourceStat = await safeStat(sourcePath);
+
+      if (!sourceStat) continue;
+
+      const targetPath = path.join(targetParentPath, path.basename(sourcePath));
+
+      if (await safeStat(targetPath)) {
+        throw new Error(`Target already contains: ${path.basename(sourcePath)}`);
+      }
+
+      await fsp.rename(sourcePath, targetPath);
+
+      if (sourceStat.isDirectory()) {
+        const movedFiles = await walkDirectory(targetPath);
+        for (const filePath of movedFiles) {
+          await processSingleFile(filePath, "move_items");
+        }
+      } else {
+        await processSingleFile(targetPath, "move_items");
+        await handleUnlink(sourcePath);
+      }
+
+      moved.push({
+        oldRelativePath: relativePath,
+        newRelativePath: path.relative(APP_ROOT, targetPath)
+      });
+    }
+
+    notifyRenderer("fs:changed", {
+      type: "items-moved",
+      moved
+    });
+
+    return { ok: true, moved };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("fs:delete-items", async (_event, { items }) => {
+  try {
+    const deleted = [];
+
+    for (const relativePath of items) {
+      const targetPath = resolveManagedPath(relativePath);
+      const stat = await safeStat(targetPath);
+      if (!stat) continue;
+
+      await removePathRecursive(targetPath);
+
+      if (!stat.isDirectory()) {
+        await handleUnlink(targetPath);
+      }
+
+      deleted.push(relativePath);
+    }
+
+    notifyRenderer("fs:changed", {
+      type: "items-deleted",
+      deleted
+    });
+
+    return { ok: true, deleted };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("fs:select-target-folder", async () => {
+  try {
+    const result = await dialog.showOpenDialog({
+      properties: ["openDirectory"],
+      defaultPath: PROJECTS_DIR
+    });
+
+    if (result.canceled) return { ok: false, canceled: true };
+
+    const selectedPath = result.filePaths[0];
+    const relativePath = path.relative(APP_ROOT, selectedPath);
+
+    return { ok: true, relativePath };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+ipcMain.handle("intake:list-folders", async () => {
+  try {
+    const entries = await fsp.readdir(INTAKE_DIR, { withFileTypes: true });
+
+    const folders = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => {
+          const fullPath = path.join(INTAKE_DIR, entry.name);
+          const stat = await safeStat(fullPath);
+
+          return {
+            name: entry.name,
+            relative_path: path.relative(APP_ROOT, fullPath),
+            file_path: fullPath,
+            is_directory: true,
+            is_missing: false,
+            updated_at: stat?.mtime?.toISOString?.() ?? null,
+            asset_type: "folder"
+          };
+        })
+    );
+
+    return folders;
+  } catch (error) {
+    console.error("intake:list-folders error:", error);
+    return [];
   }
 });
 
