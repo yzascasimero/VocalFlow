@@ -184,6 +184,9 @@
       <h1>Inbox</h1>
       <p>Review incoming files and folders, then move, archive, rename, or delete them.</p>
     </div>
+    <div class="panel-actions">
+      <button id="viewArchiveBtn" class="btn btn-secondary" type="button">View Archive</button>
+    </div>
   </header>
 
   <div class="toolbar inbox-toolbar">
@@ -207,7 +210,7 @@
     </div>
   </div>
 
-  <div class="inbox-action-bar">
+  <div class="inbox-action-bar" style="display: none;">
     <div class="inbox-action-left">
       <span id="inboxSelectionLabel" class="muted-label">No items selected</span>
     </div>
@@ -222,10 +225,10 @@
   </div>
 
   <div class="inbox-tables-container">
-    <article class="panel panel-table files-panel">
+    <article class="panel panel-table inbox-panel">
       <div class="panel-header">
-        <h2>Files</h2>
-        <span class="muted-label">Incoming files</span>
+        <h2>Inbox Items</h2>
+        <span class="muted-label">Files and folders ready for review</span>
       </div>
 
       <table class="data-table inbox-table">
@@ -239,28 +242,7 @@
             <th>Path</th>
           </tr>
         </thead>
-        <tbody id="inboxFilesTableBody"></tbody>
-      </table>
-    </article>
-
-    <article class="panel panel-table folders-panel">
-      <div class="panel-header">
-        <h2>Folders</h2>
-        <span class="muted-label">Incoming folders</span>
-      </div>
-
-      <table class="data-table inbox-table">
-        <thead>
-          <tr>
-            <th style="width: 52px;">Select</th>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Date Received</th>
-            <th>Status</th>
-            <th>Path</th>
-          </tr>
-        </thead>
-        <tbody id="inboxFoldersTableBody"></tbody>
+        <tbody id="inboxItemsTableBody"></tbody>
       </table>
     </article>
   </div>
@@ -370,18 +352,53 @@
             <button class="icon-btn" title="Filter">⏷</button>
           </div>
 
-          <article class="panel panel-table">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Filename</th>
-                  <th>Date Received</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody id="archiveTableBody"></tbody>
-            </table>
-          </article>
+          <div class="archive-action-bar" style="display: none;">
+            <div class="archive-action-left">
+              <span id="archiveSelectionLabel" class="muted-label">No items selected</span>
+            </div>
+
+            <div class="archive-action-right">
+              <button id="archiveUnarchiveBtn" class="btn btn-secondary" type="button">Unarchive</button>
+            </div>
+          </div>
+
+          <div class="archive-tables-container">
+            <article class="panel panel-table archived-panel">
+              <div class="panel-header">
+                <h2>Archived Files</h2>
+                <span class="muted-label">Moved to archive for later reference</span>
+              </div>
+              <table class="data-table archive-table">
+                <thead>
+                  <tr>
+                    <th style="width: 52px;">Select</th>
+                    <th>Filename</th>
+                    <th>Date Received</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="archivedTableBody"></tbody>
+              </table>
+            </article>
+
+            <article class="panel panel-table deleted-panel">
+              <div class="panel-header">
+                <h2>Deleted Files</h2>
+                <span class="muted-label">Permanently deleted items</span>
+              </div>
+              <table class="data-table archive-table">
+                <thead>
+                  <tr>
+                    <th style="width: 52px;">Select</th>
+                    <th>Filename</th>
+                    <th>Date Received</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="deletedTableBody"></tbody>
+              </table>
+            </article>
+          </div>
         </section>
 
         <!-- ANALYTICS -->

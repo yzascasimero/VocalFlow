@@ -289,6 +289,16 @@ async function markDeletedByPath(filePath) {
   );
 }
 
+async function resetDeletedByPath(filePath) {
+  await run(
+    `UPDATE assets
+     SET is_deleted = 0,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE file_path = ?`,
+    [filePath]
+  );
+}
+
 async function getDashboardStats() {
   const stats = await get(`
     SELECT
@@ -350,6 +360,7 @@ module.exports = {
   upsertAsset,
   markMissingByPath,
   markDeletedByPath,
+  resetDeletedByPath,
   getDashboardStats,
   listAssets,
   listProjects

@@ -1,3 +1,11 @@
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception in main process:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection in main process:', reason);
+});
+
 const os = require("os");
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
@@ -7,7 +15,6 @@ const crypto = require("crypto");
 const chokidar = require("chokidar");
 const AdmZip = require("adm-zip");
 const { spawn } = require("child_process");
-const VOCALFLOW_ROOT = path.join(app.getPath("documents"), "VocalFlow");
 
 const {
   initDatabase,
@@ -15,6 +22,7 @@ const {
   upsertAsset,
   markMissingByPath,
   markDeletedByPath,
+  resetDeletedByPath,
   getDashboardStats,
   listAssets,
   listProjects
@@ -95,11 +103,13 @@ function createWindow() {
     }
   });
 
+  mainWindow.webContents.openDevTools();
+
   mainWindow.loadFile(path.join(__dirname, "ui", "index.html"));
 }
 
 async function ensureDirectories() {
-  for (const dir of [APP_ROOT, INTAKE_DIR, PROJECTS_DIR, ARCHIVE_DIR, EXTRACTED_DIR]) {
+  for (const dir of [APP_ROOT, INTAKE_DIR, PROJECTS_DIR, ARCHIVE_DIR, path.join(ARCHIVE_DIR, "Deleted"), EXTRACTED_DIR]) {
     await fsp.mkdir(dir, { recursive: true });
   }
 }
@@ -530,7 +540,23 @@ ipcMain.handle("fs:move-item", async (_event, { sourceRelativePath, targetParent
       throw new Error("Target already contains an item with the same name.");
     }
 
+    const oldFilePaths = sourceStat.isDirectory() ? await walkDirectory(sourcePath) : [];
+
     await fsp.rename(sourcePath, targetPath);
+
+    if (sourceStat.isDirectory()) {
+      const movedFiles = await walkDirectory(targetPath);
+      for (const filePath of movedFiles) {
+        await processSingleFile(filePath, "move_item");
+      }
+
+      for (const oldFilePath of oldFilePaths) {
+        await markMissingByPath(oldFilePath);
+      }
+    } else {
+      await processSingleFile(targetPath, "move_item");
+      await handleUnlink(sourcePath);
+    }
 
     notifyRenderer("fs:changed", {
       type: "item-moved",
@@ -557,7 +583,13 @@ ipcMain.handle("fs:delete-item", async (_event, { relativePath }) => {
       throw new Error("Item not found.");
     }
 
+    const filePaths = stat.isDirectory() ? await walkDirectory(targetPath) : [targetPath];
+
     await removePathRecursive(targetPath);
+
+    for (const filePath of filePaths) {
+      await markDeletedByPath(filePath);
+    }
 
     notifyRenderer("fs:changed", {
       type: "item-deleted",
@@ -694,12 +726,19 @@ ipcMain.handle("fs:move-items", async (_event, { items, targetParentRelativePath
         throw new Error(`Target already contains: ${path.basename(sourcePath)}`);
       }
 
+      // If it's a folder, capture the old file paths so the database can mark them missing after move.
+      const oldFilePaths = sourceStat.isDirectory() ? await walkDirectory(sourcePath) : [];
+
       await fsp.rename(sourcePath, targetPath);
 
       if (sourceStat.isDirectory()) {
         const movedFiles = await walkDirectory(targetPath);
         for (const filePath of movedFiles) {
           await processSingleFile(filePath, "move_items");
+        }
+
+        for (const oldFilePath of oldFilePaths) {
+          await markMissingByPath(oldFilePath);
         }
       } else {
         await processSingleFile(targetPath, "move_items");
@@ -717,6 +756,38 @@ ipcMain.handle("fs:move-items", async (_event, { items, targetParentRelativePath
       moved
     });
 
+    // If moving to deleted folder, mark as deleted
+    if (targetParentRelativePath === "Archive/Deleted") {
+      for (const move of moved) {
+        const newPath = resolveManagedPath(move.newRelativePath);
+        const stat = await safeStat(newPath);
+        if (stat?.isDirectory()) {
+          const files = await walkDirectory(newPath);
+          for (const file of files) {
+            await markDeletedByPath(file);
+          }
+        } else {
+          await markDeletedByPath(newPath);
+        }
+      }
+    }
+
+    // If moving to Intake (unarchiving), reset is_deleted
+    if (targetParentRelativePath === "") {
+      for (const move of moved) {
+        const newPath = resolveManagedPath(move.newRelativePath);
+        const stat = await safeStat(newPath);
+        if (stat?.isDirectory()) {
+          const files = await walkDirectory(newPath);
+          for (const file of files) {
+            await resetDeletedByPath(file);
+          }
+        } else {
+          await resetDeletedByPath(newPath);
+        }
+      }
+    }
+
     return { ok: true, moved };
   } catch (error) {
     return { ok: false, error: error.message };
@@ -732,11 +803,13 @@ ipcMain.handle("fs:delete-items", async (_event, { items }) => {
       const stat = await safeStat(targetPath);
       if (!stat) continue;
 
+      // Capture all file paths under a folder so we can mark them deleted later.
+      const filePaths = stat.isDirectory() ? await walkDirectory(targetPath) : [targetPath];
+
       await removePathRecursive(targetPath);
 
-      if (!stat.isDirectory()) {
-        // Mark deleted (explicit user delete), while still keeping missing/moved logic separate.
-        await markDeletedByPath(targetPath);
+      for (const filePath of filePaths) {
+        await markDeletedByPath(filePath);
       }
 
       deleted.push(relativePath);
@@ -805,7 +878,7 @@ app.whenReady().then(async () => {
   await ensureDirectories();
   await initDatabase();
   createWindow();
-  await initialScan();
+  // await initialScan(); // disabled for debugging
   setupWatcher();
 
   app.on("activate", () => {

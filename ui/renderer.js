@@ -8,7 +8,8 @@ const pageSections = document.querySelectorAll(".page-section");
 
 const assetsTableBody = document.getElementById("assetsTableBody");
 const projectsTableBody = document.getElementById("projectsTableBody");
-const archiveTableBody = document.getElementById("archiveTableBody");
+const archivedTableBody = document.getElementById("archivedTableBody");
+const deletedTableBody = document.getElementById("deletedTableBody");
 const pathsContainer = document.getElementById("pathsContainer");
 const eventLog = document.getElementById("eventLog");
 const analyticsFeed = document.getElementById("analyticsFeed");
@@ -25,14 +26,21 @@ const inboxFilterMenu = document.getElementById("inboxFilterMenu");
 const inboxFilterOptions = document.querySelectorAll(".filter-option");
 const projectsSearch = document.getElementById("projectsSearch");
 
-const inboxFilesTableBody = document.getElementById("inboxFilesTableBody");
-const inboxFoldersTableBody = document.getElementById("inboxFoldersTableBody");
+const viewArchiveBtn = document.getElementById("viewArchiveBtn");
+
+let selectedArchiveItems = new Set();
+
+const archiveSelectionLabel = document.getElementById("archiveSelectionLabel");
+const archiveUnarchiveBtn = document.getElementById("archiveUnarchiveBtn");
+const archiveActionBar = document.querySelector(".archive-action-bar");
 const inboxSelectionLabel = document.getElementById("inboxSelectionLabel");
 const inboxOpenBtn = document.getElementById("inboxOpenBtn");
 const inboxRenameBtn = document.getElementById("inboxRenameBtn");
 const inboxMoveBtn = document.getElementById("inboxMoveBtn");
 const inboxArchiveBtn = document.getElementById("inboxArchiveBtn");
 const inboxDeleteBtn = document.getElementById("inboxDeleteBtn");
+
+const inboxActionBar = document.querySelector(".inbox-action-bar");
 
 const inboxBadge = document.getElementById("inboxBadge");
 
@@ -82,7 +90,7 @@ const importFolderBtn = document.getElementById("importFolderBtn");
 let calendarDate = new Date();
 let selectedDate = new Date();
 let currentProjectPath = "Projects";
-let currentInboxFilter = "all";
+let currentInboxFilter = "active";
 
 let selectedInboxItems = new Set();
 let cachedInboxFolders = [];
@@ -166,6 +174,31 @@ function getSelectedInboxItems() {
   return allItems.filter((item) => selectedInboxItems.has(item.relative_path));
 }
 
+function updateArchiveActionState() {
+  const selected = Array.from(selectedArchiveItems);
+  if (archiveSelectionLabel) {
+    archiveSelectionLabel.textContent = selected.length
+      ? `${selected.length} item(s) selected`
+      : "No items selected";
+  }
+  const hasSelection = selected.length > 0;
+  if (archiveActionBar) {
+    archiveActionBar.style.display = hasSelection ? 'flex' : 'none';
+  }
+  if (archiveUnarchiveBtn) {
+    archiveUnarchiveBtn.disabled = !hasSelection;
+  }
+}
+
+function handleArchiveSelection(path, checked) {
+  if (checked) {
+    selectedArchiveItems.add(path);
+  } else {
+    selectedArchiveItems.delete(path);
+  }
+  updateArchiveActionState();
+}
+
 function updateInboxActionState() {
   const selected = getSelectedInboxItems();
 
@@ -175,9 +208,13 @@ function updateInboxActionState() {
       : "No items selected";
   }
 
-  const disabled = selected.length === 0;
+  const hasSelection = selected.length > 0;
+  if (inboxActionBar) {
+    inboxActionBar.style.display = hasSelection ? 'flex' : 'none';
+  }
+
   [inboxOpenBtn, inboxRenameBtn, inboxMoveBtn, inboxArchiveBtn, inboxDeleteBtn].forEach((btn) => {
-    if (btn) btn.disabled = disabled;
+    if (btn) btn.disabled = !hasSelection;
   });
 
   if (inboxRenameBtn) {
@@ -226,19 +263,22 @@ function renderActionList(assets) {
     return;
   }
 
-  actionList.innerHTML = urgentAssets.map((asset) => `
+  actionList.innerHTML = urgentAssets.map((asset) => {
+    const status = getInboxStatus(asset);
+    return `
     <div class="action-row">
       <div class="action-main">
         <strong>${escapeHtml(asset.file_name)}</strong>
         <span>${escapeHtml(asset.project_code || "Unassigned Project")}</span>
       </div>
       <div class="action-tags">
-        <span class="mini-tag ${asset.is_missing ? "danger" : "primary"}">
-          ${asset.is_missing ? "Needs Review" : "Active"}
+        <span class="mini-tag ${status.className}">
+          ${status.label}
         </span>
       </div>
     </div>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function getInboxStatus(item) {
@@ -262,17 +302,32 @@ function getInboxStatus(item) {
 }
 
 function renderInboxTables(files, folders) {
-  if (!inboxFilesTableBody || !inboxFoldersTableBody || !archiveTableBody) return;
+  if (!inboxItemsTableBody || !archivedTableBody || !deletedTableBody) return;
 
-  if (!files.length) {
-    inboxFilesTableBody.innerHTML = `
+  // Combine files and folders into one list
+  const allItems = [
+    ...files.map(item => ({ ...item, itemType: 'file' })),
+    ...folders.map(item => ({ ...item, itemType: 'folder' }))
+  ];
+
+  // Sort by updated_at descending
+  allItems.sort((a, b) => {
+    const aDate = a.updated_at ? new Date(a.updated_at) : new Date(0);
+    const bDate = b.updated_at ? new Date(b.updated_at) : new Date(0);
+    return bDate - aDate;
+  });
+
+  if (!allItems.length) {
+    inboxItemsTableBody.innerHTML = `
       <tr>
-        <td colspan="6" class="empty-table">No files found.</td>
+        <td colspan="6" class="empty-table">No items found.</td>
       </tr>
     `;
   } else {
-    inboxFilesTableBody.innerHTML = files.map((item) => {
+    inboxItemsTableBody.innerHTML = allItems.map((item) => {
       const status = getInboxStatus(item);
+      const name = item.itemType === 'file' ? item.file_name : item.name;
+      const type = item.itemType === 'file' ? (item.asset_type || item.extension || "file") : "folder";
       return `
       <tr class="${selectedInboxItems.has(item.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(item.relative_path)}">
         <td>
@@ -282,40 +337,8 @@ function renderInboxTables(files, folders) {
             ${selectedInboxItems.has(item.relative_path) ? "checked" : ""}
           />
         </td>
-        <td>${escapeHtml(item.file_name)}</td>
-        <td>${escapeHtml(item.asset_type || item.extension || "file")}</td>
-        <td>${formatDate(item.updated_at)}</td>
-        <td>
-          <span class="status-chip ${status.className}">
-            ${status.label}
-          </span>
-        </td>
-        <td class="path-muted">${escapeHtml(item.relative_path)}</td>
-      </tr>
-    `;
-    }).join("");
-  }
-
-  if (!folders.length) {
-    inboxFoldersTableBody.innerHTML = `
-      <tr>
-        <td colspan="6" class="empty-table">No folders found.</td>
-      </tr>
-    `;
-  } else {
-    inboxFoldersTableBody.innerHTML = folders.map((item) => {
-      const status = getInboxStatus(item);
-      return `
-      <tr class="${selectedInboxItems.has(item.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(item.relative_path)}">
-        <td>
-          <input
-            class="asset-select"
-            type="checkbox"
-            ${selectedInboxItems.has(item.relative_path) ? "checked" : ""}
-          />
-        </td>
-        <td>${escapeHtml(item.name)}</td>
-        <td>folder</td>
+        <td>${escapeHtml(name)}</td>
+        <td>${escapeHtml(type)}</td>
         <td>${formatDate(item.updated_at)}</td>
         <td>
           <span class="status-chip ${status.className}">
@@ -330,14 +353,26 @@ function renderInboxTables(files, folders) {
 
   const archived = (cachedAssets || []).filter((asset) => {
     const status = getInboxStatus(asset);
-    return status.className !== "success";
+    return status.className === "archived";
   });
 
-  archiveTableBody.innerHTML = archived.length
+  const deleted = (cachedAssets || []).filter((asset) => {
+    const status = getInboxStatus(asset);
+    return status.className === "danger" && status.label === "Deleted";
+  });
+
+  archivedTableBody.innerHTML = archived.length
     ? archived.map((asset) => {
         const status = getInboxStatus(asset);
         return `
-      <tr>
+      <tr class="${selectedArchiveItems.has(asset.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(asset.relative_path)}">
+        <td>
+          <input
+            class="archive-select"
+            type="checkbox"
+            ${selectedArchiveItems.has(asset.relative_path) ? "checked" : ""}
+          />
+        </td>
         <td>${escapeHtml(asset.file_name)}</td>
         <td>${formatDate(asset.updated_at)}</td>
         <td><span class="status-chip ${status.className}">${status.label}</span></td>
@@ -346,7 +381,31 @@ function renderInboxTables(files, folders) {
       }).join("")
     : `
       <tr>
-        <td colspan="3" class="empty-table">No archived files.</td>
+        <td colspan="4" class="empty-table">No archived files.</td>
+      </tr>
+    `;
+
+  deletedTableBody.innerHTML = deleted.length
+    ? deleted.map((asset) => {
+        const status = getInboxStatus(asset);
+        return `
+      <tr class="${selectedArchiveItems.has(asset.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(asset.relative_path)}">
+        <td>
+          <input
+            class="archive-select"
+            type="checkbox"
+            ${selectedArchiveItems.has(asset.relative_path) ? "checked" : ""}
+          />
+        </td>
+        <td>${escapeHtml(asset.file_name)}</td>
+        <td>${formatDate(asset.updated_at)}</td>
+        <td><span class="status-chip ${status.className}">${status.label}</span></td>
+      </tr>
+    `;
+      }).join("")
+    : `
+      <tr>
+        <td colspan="4" class="empty-table">No deleted files.</td>
       </tr>
     `;
 
@@ -440,38 +499,63 @@ function renderProjects(projects) {
 async function loadPaths() {
   if (!pathsContainer || !window.vocalflowAPI?.getPaths) return;
 
-  const paths = await window.vocalflowAPI.getPaths();
-  pathsContainer.innerHTML = `
-    <div class="path-item"><span>App Root</span><code>${escapeHtml(paths.appRoot)}</code></div>
-    <div class="path-item"><span>Intake</span><code>${escapeHtml(paths.intakeDir)}</code></div>
-    <div class="path-item"><span>Projects</span><code>${escapeHtml(paths.projectsDir)}</code></div>
-    <div class="path-item"><span>Archive</span><code>${escapeHtml(paths.archiveDir)}</code></div>
-    <div class="path-item"><span>Extracted</span><code>${escapeHtml(paths.extractedDir)}</code></div>
-  `;
+  try {
+    console.log("Calling getPaths");
+    const paths = await window.vocalflowAPI.getPaths();
+    console.log("Paths received:", paths);
+    pathsContainer.innerHTML = `
+      <div class="path-item"><span>App Root</span><code>${escapeHtml(paths.appRoot)}</code></div>
+      <div class="path-item"><span>Intake</span><code>${escapeHtml(paths.intakeDir)}</code></div>
+      <div class="path-item"><span>Projects</span><code>${escapeHtml(paths.projectsDir)}</code></div>
+      <div class="path-item"><span>Archive</span><code>${escapeHtml(paths.archiveDir)}</code></div>
+      <div class="path-item"><span>Extracted</span><code>${escapeHtml(paths.extractedDir)}</code></div>
+    `;
+  } catch (error) {
+    console.error("loadPaths error:", error);
+    throw error;
+  }
 }
 
 async function loadStats() {
   if (!window.vocalflowAPI?.getDashboardStats) return;
 
-  const stats = await window.vocalflowAPI.getDashboardStats();
-  const totalAssets = document.getElementById("statTotalAssets");
-  const missingAssets = document.getElementById("statMissingAssets");
+  try {
+    console.log("Calling getDashboardStats");
+    const stats = await window.vocalflowAPI.getDashboardStats();
+    console.log("Stats received:", stats);
+    const totalAssets = document.getElementById("statTotalAssets");
+    const missingAssets = document.getElementById("statMissingAssets");
 
-  if (totalAssets) totalAssets.textContent = stats.total_assets ?? 0;
-  if (missingAssets) missingAssets.textContent = stats.missing_assets ?? 0;
+    if (totalAssets) totalAssets.textContent = stats.total_assets ?? 0;
+    if (missingAssets) missingAssets.textContent = stats.missing_assets ?? 0;
+  } catch (error) {
+    console.error("loadStats error:", error);
+    throw error;
+  }
 }
 
 async function loadData() {
   if (!window.vocalflowAPI?.listAssets || !window.vocalflowAPI?.listProjects) return;
 
-  cachedAssets = await window.vocalflowAPI.listAssets();
-  cachedProjects = await window.vocalflowAPI.listProjects();
-  cachedInboxFolders = await window.vocalflowAPI.listIntakeFolders();
+  try {
+    console.log("Calling listAssets");
+    cachedAssets = await window.vocalflowAPI.listAssets();
+    console.log("Assets received:", cachedAssets?.length);
+    console.log("Calling listProjects");
+    cachedProjects = await window.vocalflowAPI.listProjects();
+    console.log("Projects received:", cachedProjects?.length);
+    console.log("Calling listIntakeFolders");
+    cachedInboxFolders = await window.vocalflowAPI.listIntakeFolders();
+    console.log("Folders received:", cachedInboxFolders?.length);
 
-  applyInboxFilters();
-  renderProjects(cachedProjects);
-  renderActionList(cachedAssets);
-  updateInboxBadge();
+    applyInboxFilters();
+    renderProjects(cachedProjects);
+    renderActionList(cachedAssets);
+    updateInboxBadge();
+  } catch (error) {
+    console.error("loadData error:", error);
+    throw error;
+  }
 }
 
 function updateInboxBadge() {
@@ -903,7 +987,8 @@ async function deleteSelectedInboxItems() {
 
   const relativePaths = selected.map((item) => item.relative_path);
 
-  const result = await window.vocalflowAPI.deleteItems(relativePaths);
+  // Move to Archive/Deleted instead of deleting
+  const result = await window.vocalflowAPI.moveItems(relativePaths, "Archive/Deleted");
 
   if (!result?.ok) {
     showMessage(result?.error || "Delete failed.");
@@ -912,9 +997,9 @@ async function deleteSelectedInboxItems() {
 
   selectedInboxItems.clear();
 
-  const deletedCount = result.deleted?.length || relativePaths.length;
+  const deletedCount = result.moved?.length || relativePaths.length;
 
-  alert(`${deletedCount} item(s) deleted.`);
+  alert(`${deletedCount} item(s) moved to deleted.`);
 
   await refreshAll();
   await loadProjectDirectory("Projects");
@@ -945,16 +1030,50 @@ inboxDeleteBtn?.addEventListener("click", async () => {
   await deleteSelectedInboxItems();
 });
 
+//unarchive
+archiveUnarchiveBtn?.addEventListener("click", async () => {
+  if (selectedArchiveItems.size === 0) {
+    alert("Please select items to unarchive.");
+    return;
+  }
+
+  const itemsToUnarchive = Array.from(selectedArchiveItems);
+  const confirmed = confirm(`Unarchive ${itemsToUnarchive.length} item(s)? This will move them back to Intake.`);
+  if (!confirmed) return;
+
+  try {
+    const result = await window.vocalflowAPI.moveItems(
+      itemsToUnarchive,
+      "" // Intake is the root
+    );
+
+    if (result?.ok) {
+      alert(`Successfully unarchived ${itemsToUnarchive.length} item(s).`);
+      selectedArchiveItems.clear();
+      updateArchiveActionState();
+      await loadArchiveData();
+    } else {
+      alert(`Failed to unarchive items: ${result?.error}`);
+    }
+  } catch (error) {
+    console.error("Unarchive error:", error);
+    alert("An error occurred while unarchiving items.");
+  }
+});
+
 loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   try {
     showApp();
+    console.log("About to refreshAll");
     await refreshAll();
+    console.log("refreshAll done");
     addLog(eventLog, "User session started.");
     addLog(analyticsFeed, "Dashboard initialized.");
   } catch (error) {
     console.error("Login/init error:", error);
+    console.error("Error stack:", error.stack);
     alert("Dashboard failed to initialize. Check the console.");
   }
 });
@@ -967,6 +1086,10 @@ navItems.forEach((item) => {
   item.addEventListener("click", () => {
     switchSection(item.dataset.section);
   });
+});
+
+viewArchiveBtn?.addEventListener("click", () => {
+  switchSection("archive");
 });
 
 rescanBtn?.addEventListener("click", async () => {
@@ -1162,7 +1285,7 @@ inboxRenameBtn?.addEventListener("click", async () => {
   });
 });
 
-[inboxFilesTableBody, inboxFoldersTableBody].forEach((tableBody) => {
+[inboxItemsTableBody].forEach((tableBody) => {
   tableBody?.addEventListener("click", (e) => {
     const row = e.target.closest("tr[data-path]");
     if (!row) return;
@@ -1181,6 +1304,29 @@ inboxRenameBtn?.addEventListener("click", async () => {
 
     if (e.target.matches(".asset-select")) {
       handleInboxSelection(row.dataset.path, e.target.checked);
+    }
+  });
+});
+
+[archivedTableBody, deletedTableBody].forEach((tableBody) => {
+  tableBody?.addEventListener("click", (e) => {
+    const row = e.target.closest("tr[data-path]");
+    if (!row) return;
+
+    if (!e.target.matches(".archive-select")) {
+      const path = row.dataset.path;
+      const isSelected = selectedArchiveItems.has(path);
+
+      handleArchiveSelection(path, !isSelected);
+    }
+  });
+
+  tableBody?.addEventListener("change", (e) => {
+    const row = e.target.closest("tr[data-path]");
+    if (!row) return;
+
+    if (e.target.matches(".archive-select")) {
+      handleArchiveSelection(row.dataset.path, e.target.checked);
     }
   });
 });
