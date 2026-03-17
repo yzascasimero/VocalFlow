@@ -14,6 +14,7 @@ const {
   ensureDrive,
   upsertAsset,
   markMissingByPath,
+  markDeletedByPath,
   getDashboardStats,
   listAssets,
   listProjects
@@ -734,7 +735,8 @@ ipcMain.handle("fs:delete-items", async (_event, { items }) => {
       await removePathRecursive(targetPath);
 
       if (!stat.isDirectory()) {
-        await handleUnlink(targetPath);
+        // Mark deleted (explicit user delete), while still keeping missing/moved logic separate.
+        await markDeletedByPath(targetPath);
       }
 
       deleted.push(relativePath);

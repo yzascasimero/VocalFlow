@@ -72,6 +72,7 @@ async function initDatabase() {
       episode_number TEXT,
       asset_type TEXT,
       is_missing INTEGER DEFAULT 0,
+      is_deleted INTEGER DEFAULT 0,
       intake_source TEXT,
       analytics_json TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -81,10 +82,17 @@ async function initDatabase() {
     )
   `);
 
+  // Add column if schema already existed without it (migration path)
+  const existingCols = await all(`PRAGMA table_info(assets)`);
+  if (!existingCols.some((col) => col.name === "is_deleted")) {
+    await run(`ALTER TABLE assets ADD COLUMN is_deleted INTEGER DEFAULT 0`);
+  }
+
   await run(`CREATE INDEX IF NOT EXISTS idx_assets_file_hash ON assets(file_hash)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_assets_project_id ON assets(project_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_assets_drive_id ON assets(drive_id)`);
   await run(`CREATE INDEX IF NOT EXISTS idx_assets_missing ON assets(is_missing)`);
+  await run(`CREATE INDEX IF NOT EXISTS idx_assets_deleted ON assets(is_deleted)`);
 }
 
 async function ensureDrive(name, rootPath) {
@@ -270,11 +278,23 @@ async function markMissingByPath(filePath) {
   );
 }
 
+async function markDeletedByPath(filePath) {
+  await run(
+    `UPDATE assets
+     SET is_missing = 1,
+         is_deleted = 1,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE file_path = ?`,
+    [filePath]
+  );
+}
+
 async function getDashboardStats() {
   const stats = await get(`
     SELECT
-      (SELECT COUNT(*) FROM assets WHERE is_missing = 0) AS total_assets,
-      (SELECT COUNT(*) FROM assets WHERE is_missing = 1) AS missing_assets,
+      (SELECT COUNT(*) FROM assets WHERE is_missing = 0 AND is_deleted = 0) AS total_assets,
+      (SELECT COUNT(*) FROM assets WHERE is_missing = 1 AND is_deleted = 0) AS missing_assets,
+      (SELECT COUNT(*) FROM assets WHERE is_deleted = 1) AS deleted_assets,
       (SELECT COUNT(*) FROM projects) AS total_projects,
       (SELECT COUNT(*) FROM drives) AS total_drives
   `);
@@ -295,6 +315,7 @@ async function listAssets() {
       a.file_hash,
       a.drive_id,
       a.is_missing,
+      a.is_deleted,
       a.updated_at,
       p.project_code,
       p.project_name
@@ -328,6 +349,7 @@ module.exports = {
   ensureProject,
   upsertAsset,
   markMissingByPath,
+  markDeletedByPath,
   getDashboardStats,
   listAssets,
   listProjects

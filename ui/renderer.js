@@ -34,6 +34,8 @@ const inboxMoveBtn = document.getElementById("inboxMoveBtn");
 const inboxArchiveBtn = document.getElementById("inboxArchiveBtn");
 const inboxDeleteBtn = document.getElementById("inboxDeleteBtn");
 
+const inboxBadge = document.getElementById("inboxBadge");
+
 const calendarGrid = document.getElementById("calendarGrid");
 const calendarMonthLabel = document.getElementById("calendarMonthLabel");
 const prevMonthBtn = document.getElementById("prevMonthBtn");
@@ -239,6 +241,26 @@ function renderActionList(assets) {
   `).join("");
 }
 
+function getInboxStatus(item) {
+  if (item.is_deleted === true) {
+    return { label: "Deleted", className: "danger" };
+  }
+
+  if (item.is_missing === true) {
+    return { label: "Missing", className: "danger" };
+  }
+
+  // Check if the file is in the Archive folder by looking at the file_path
+  const filePathLower = (item.file_path || "").toLowerCase();
+  const isArchived = filePathLower.includes("\\archive\\") || filePathLower.includes("/archive/") || filePathLower.endsWith("\\archive") || filePathLower.endsWith("/archive");
+
+  if (isArchived) {
+    return { label: "Archived", className: "archived" };
+  }
+
+  return { label: "Active", className: "success" };
+}
+
 function renderInboxTables(files, folders) {
   if (!inboxFilesTableBody || !inboxFoldersTableBody || !archiveTableBody) return;
 
@@ -249,7 +271,9 @@ function renderInboxTables(files, folders) {
       </tr>
     `;
   } else {
-    inboxFilesTableBody.innerHTML = files.map((item) => `
+    inboxFilesTableBody.innerHTML = files.map((item) => {
+      const status = getInboxStatus(item);
+      return `
       <tr class="${selectedInboxItems.has(item.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(item.relative_path)}">
         <td>
           <input
@@ -262,13 +286,14 @@ function renderInboxTables(files, folders) {
         <td>${escapeHtml(item.asset_type || item.extension || "file")}</td>
         <td>${formatDate(item.updated_at)}</td>
         <td>
-          <span class="status-chip ${item.is_missing ? "danger" : "success"}">
-            ${item.is_missing ? "Missing" : "Active"}
+          <span class="status-chip ${status.className}">
+            ${status.label}
           </span>
         </td>
         <td class="path-muted">${escapeHtml(item.relative_path)}</td>
       </tr>
-    `).join("");
+    `;
+    }).join("");
   }
 
   if (!folders.length) {
@@ -278,7 +303,9 @@ function renderInboxTables(files, folders) {
       </tr>
     `;
   } else {
-    inboxFoldersTableBody.innerHTML = folders.map((item) => `
+    inboxFoldersTableBody.innerHTML = folders.map((item) => {
+      const status = getInboxStatus(item);
+      return `
       <tr class="${selectedInboxItems.has(item.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(item.relative_path)}">
         <td>
           <input
@@ -291,25 +318,35 @@ function renderInboxTables(files, folders) {
         <td>folder</td>
         <td>${formatDate(item.updated_at)}</td>
         <td>
-          <span class="status-chip success">Active</span>
+          <span class="status-chip ${status.className}">
+            ${status.label}
+          </span>
         </td>
         <td class="path-muted">${escapeHtml(item.relative_path)}</td>
       </tr>
-    `).join("");
+    `;
+    }).join("");
   }
 
-  const archived = cachedAssets.filter((asset) => asset.is_missing);
+  const archived = (cachedAssets || []).filter((asset) => {
+    const status = getInboxStatus(asset);
+    return status.className !== "success";
+  });
+
   archiveTableBody.innerHTML = archived.length
-    ? archived.map((asset) => `
+    ? archived.map((asset) => {
+        const status = getInboxStatus(asset);
+        return `
       <tr>
         <td>${escapeHtml(asset.file_name)}</td>
         <td>${formatDate(asset.updated_at)}</td>
-        <td><span class="status-chip danger">Archived / Missing</span></td>
+        <td><span class="status-chip ${status.className}">${status.label}</span></td>
       </tr>
-    `).join("")
+    `;
+      }).join("")
     : `
       <tr>
-        <td colspan="3" class="empty-table">No archived or missing files.</td>
+        <td colspan="3" class="empty-table">No archived files.</td>
       </tr>
     `;
 
@@ -434,6 +471,30 @@ async function loadData() {
   applyInboxFilters();
   renderProjects(cachedProjects);
   renderActionList(cachedAssets);
+  updateInboxBadge();
+}
+
+function updateInboxBadge() {
+  if (!inboxBadge) return;
+
+  // Count active intakes: files that are not missing + not archived + all folders
+  const activeFiles = (cachedAssets || []).filter((item) => {
+    const status = getInboxStatus(item);
+    return status.className === "success";
+  }).length;
+
+  const activeFolders = (cachedInboxFolders || []).filter((item) => {
+    const status = getInboxStatus(item);
+    return status.className === "success";
+  }).length;
+  const totalActive = activeFiles + activeFolders;
+
+  if (totalActive > 0) {
+    inboxBadge.textContent = totalActive;
+    inboxBadge.style.display = 'inline-block';
+  } else {
+    inboxBadge.style.display = 'none';
+  }
 }
 
 async function refreshAll() {
@@ -708,10 +769,10 @@ function applyInboxFilters() {
   } else if (currentInboxFilter === "folders") {
     files = [];
   } else if (currentInboxFilter === "active") {
-    files = files.filter((item) => !item.is_missing);
+    files = files.filter((item) => getInboxStatus(item).className === "success");
   } else if (currentInboxFilter === "missing") {
     folders = [];
-    files = files.filter((item) => item.is_missing);
+    files = files.filter((item) => item.is_missing === true && item.is_deleted !== true);
   }
 
   const visiblePaths = new Set([
