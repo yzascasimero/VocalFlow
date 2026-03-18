@@ -160,7 +160,7 @@ async function upsertAsset(asset) {
            mtime_ms = ?,
            file_hash = ?,
            drive_id = ?,
-           project_id = ?,
+           project_id = COALESCE(?, project_id),
            episode_number = ?,
            asset_type = ?,
            intake_source = ?,
@@ -203,7 +203,7 @@ async function upsertAsset(asset) {
              size_bytes = ?,
              mtime_ms = ?,
              drive_id = ?,
-             project_id = ?,
+             project_id = COALESCE(?, project_id),
              episode_number = ?,
              asset_type = ?,
              intake_source = ?,
@@ -299,6 +299,17 @@ async function resetDeletedByPath(filePath) {
   );
 }
 
+async function updateAssetProjectByPath(filePath, projectCode, projectName = null) {
+  const project_id = projectCode ? await ensureProject(projectCode, projectName) : null;
+  await run(
+    `UPDATE assets
+     SET project_id = ?,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE file_path = ?`,
+    [project_id, filePath]
+  );
+}
+
 async function getDashboardStats() {
   const stats = await get(`
     SELECT
@@ -361,6 +372,7 @@ module.exports = {
   markMissingByPath,
   markDeletedByPath,
   resetDeletedByPath,
+  updateAssetProjectByPath,
   getDashboardStats,
   listAssets,
   listProjects

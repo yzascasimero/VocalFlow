@@ -10,6 +10,8 @@ const assetsTableBody = document.getElementById("assetsTableBody");
 const projectsTableBody = document.getElementById("projectsTableBody");
 const archivedTableBody = document.getElementById("archivedTableBody");
 const deletedTableBody = document.getElementById("deletedTableBody");
+const inboxItemsTableBody = document.getElementById("inboxItemsTableBody");
+const assignedItemsTableBody = document.getElementById("assignedItemsTableBody");
 const pathsContainer = document.getElementById("pathsContainer");
 const eventLog = document.getElementById("eventLog");
 const analyticsFeed = document.getElementById("analyticsFeed");
@@ -298,11 +300,15 @@ function getInboxStatus(item) {
     return { label: "Archived", className: "archived" };
   }
 
-  return { label: "Active", className: "success" };
+  const isAssigned = item.project_code ? true : false;
+  if (isAssigned) {
+    return { label: "Assigned", className: "info" };
+  }
+  return { label: "Unassigned", className: "success" };
 }
 
 function renderInboxTables(files, folders) {
-  if (!inboxItemsTableBody || !archivedTableBody || !deletedTableBody) return;
+  if (!inboxItemsTableBody || !assignedItemsTableBody || !archivedTableBody || !deletedTableBody) return;
 
   // Combine files and folders into one list
   const allItems = [
@@ -317,26 +323,27 @@ function renderInboxTables(files, folders) {
     return bDate - aDate;
   });
 
-  if (!allItems.length) {
-    inboxItemsTableBody.innerHTML = `
-      <tr>
-        <td colspan="6" class="empty-table">No items found.</td>
-      </tr>
-    `;
-  } else {
-    inboxItemsTableBody.innerHTML = allItems.map((item) => {
+  // Separate active (unassigned) and assigned items
+  const activeItems = allItems.filter(item => !item.project_code);
+  const assignedItems = allItems.filter(item => item.project_code);
+
+  // Helper function to render inbox table rows
+  const renderInboxRows = (items, showCheckboxes = true) => {
+    return items.map((item) => {
       const status = getInboxStatus(item);
       const name = item.itemType === 'file' ? item.file_name : item.name;
       const type = item.itemType === 'file' ? (item.asset_type || item.extension || "file") : "folder";
-      return `
-      <tr class="${selectedInboxItems.has(item.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(item.relative_path)}">
+      const checkboxCell = showCheckboxes ? `
         <td>
           <input
             class="asset-select"
             type="checkbox"
             ${selectedInboxItems.has(item.relative_path) ? "checked" : ""}
           />
-        </td>
+        </td>` : `<td></td>`;
+      return `
+      <tr class="${selectedInboxItems.has(item.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(item.relative_path)}">
+        ${checkboxCell}
         <td>${escapeHtml(name)}</td>
         <td>${escapeHtml(type)}</td>
         <td>${formatDate(item.updated_at)}</td>
@@ -349,6 +356,39 @@ function renderInboxTables(files, folders) {
       </tr>
     `;
     }).join("");
+  };
+
+  // Determine visibility based on filter
+  const showActive = currentInboxFilter === "all" || currentInboxFilter === "active" || currentInboxFilter === "files" || currentInboxFilter === "folders" || currentInboxFilter === "missing";
+  const showAssigned = currentInboxFilter === "all" || currentInboxFilter === "assigned";
+
+  // Get parent panels for active and assigned tables
+  const activePanelParent = inboxItemsTableBody.closest(".inbox-panel");
+  const assignedPanelParent = assignedItemsTableBody.closest(".inbox-panel");
+
+  if (activePanelParent) activePanelParent.style.display = showActive ? "block" : "none";
+  if (assignedPanelParent) assignedPanelParent.style.display = showAssigned ? "block" : "none";
+
+  // Render active items
+  if (!activeItems.length) {
+    inboxItemsTableBody.innerHTML = `
+      <tr>
+        <td colspan="6" class="empty-table">No unassigned items.</td>
+      </tr>
+    `;
+  } else {
+    inboxItemsTableBody.innerHTML = renderInboxRows(activeItems, true);
+  }
+
+  // Render assigned items
+  if (!assignedItems.length) {
+    assignedItemsTableBody.innerHTML = `
+      <tr>
+        <td colspan="6" class="empty-table">No assigned items.</td>
+      </tr>
+    `;
+  } else {
+    assignedItemsTableBody.innerHTML = renderInboxRows(assignedItems, false);
   }
 
   const archived = (cachedAssets || []).filter((asset) => {
@@ -526,7 +566,16 @@ async function loadStats() {
     const totalAssets = document.getElementById("statTotalAssets");
     const missingAssets = document.getElementById("statMissingAssets");
 
-    if (totalAssets) totalAssets.textContent = stats.total_assets ?? 0;
+    // Count active unassigned intakes from cached data
+    const activeUnassignedCount = ((cachedAssets || []).filter((asset) => {
+      const status = getInboxStatus(asset);
+      return status.className === "success" && !asset.project_code;
+    }).length) + ((cachedInboxFolders || []).filter((folder) => {
+      const status = getInboxStatus(folder);
+      return status.className === "success" && !folder.project_code;
+    }).length);
+
+    if (totalAssets) totalAssets.textContent = activeUnassignedCount;
     if (missingAssets) missingAssets.textContent = stats.missing_assets ?? 0;
   } catch (error) {
     console.error("loadStats error:", error);
@@ -561,15 +610,15 @@ async function loadData() {
 function updateInboxBadge() {
   if (!inboxBadge) return;
 
-  // Count active intakes: files that are not missing + not archived + all folders
+  // Count active intakes: unassigned files that are not missing + not archived + unassigned folders
   const activeFiles = (cachedAssets || []).filter((item) => {
     const status = getInboxStatus(item);
-    return status.className === "success";
+    return status.className === "success" && !item.project_code;
   }).length;
 
   const activeFolders = (cachedInboxFolders || []).filter((item) => {
     const status = getInboxStatus(item);
-    return status.className === "success";
+    return status.className === "success" && !item.project_code;
   }).length;
   const totalActive = activeFiles + activeFolders;
 
@@ -582,7 +631,9 @@ function updateInboxBadge() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadStats(), loadData(), loadPaths()]);
+  await loadData();
+  await loadStats();
+  await loadPaths();
 }
 
 function handleInboxSelection(path, checked) {
@@ -848,12 +899,11 @@ function applyInboxFilters() {
     );
   }
 
+  // Filter by type
   if (currentInboxFilter === "files") {
     folders = [];
   } else if (currentInboxFilter === "folders") {
     files = [];
-  } else if (currentInboxFilter === "active") {
-    files = files.filter((item) => getInboxStatus(item).className === "success");
   } else if (currentInboxFilter === "missing") {
     folders = [];
     files = files.filter((item) => item.is_missing === true && item.is_deleted !== true);
@@ -868,6 +918,7 @@ function applyInboxFilters() {
     [...selectedInboxItems].filter((path) => visiblePaths.has(path))
   );
 
+  // Pass all items to renderInboxTables - it will separate active/assigned and apply filter display
   renderInboxTables(files, folders);
 }
 

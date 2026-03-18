@@ -205,6 +205,7 @@
         <button class="filter-option" type="button" data-filter="files">Files Only</button>
         <button class="filter-option" type="button" data-filter="folders">Folders Only</button>
         <button class="filter-option" type="button" data-filter="active">Active Only</button>
+        <button class="filter-option" type="button" data-filter="assigned">Assigned Only</button>
         <button class="filter-option" type="button" data-filter="missing">Missing Only</button>
       </div>
     </div>
@@ -243,6 +244,27 @@
           </tr>
         </thead>
         <tbody id="inboxItemsTableBody"></tbody>
+      </table>
+    </article>
+
+    <article class="panel panel-table inbox-panel">
+      <div class="panel-header">
+        <h2>Assigned Items</h2>
+        <span class="muted-label">Files and folders assigned to projects</span>
+      </div>
+
+      <table class="data-table inbox-table">
+        <thead>
+          <tr>
+            <th style="width: 52px;"></th>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Date Received</th>
+            <th>Status</th>
+            <th>Path</th>
+          </tr>
+        </thead>
+        <tbody id="assignedItemsTableBody"></tbody>
       </table>
     </article>
   </div>

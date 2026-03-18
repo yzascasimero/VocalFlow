@@ -23,6 +23,7 @@ const {
   markMissingByPath,
   markDeletedByPath,
   resetDeletedByPath,
+  updateAssetProjectByPath,
   getDashboardStats,
   listAssets,
   listProjects
@@ -74,6 +75,23 @@ function sanitizeName(name) {
     throw new Error("Invalid name.");
   }
   return trimmed;
+}
+
+function extractProjectCodeFromPath(filePath) {
+  try {
+    // Check if the file is inside the Projects directory
+    if (isPathInside(PROJECTS_DIR, filePath)) {
+      const relative = path.relative(PROJECTS_DIR, filePath);
+      const parts = relative.split(path.sep);
+      // The first part is the project folder name
+      if (parts.length > 0 && parts[0]) {
+        return parts[0];
+      }
+    }
+  } catch (error) {
+    console.error("Error extracting project code from path:", error);
+  }
+  return null;
 }
 
 async function safeStat(targetPath) {
@@ -784,6 +802,23 @@ ipcMain.handle("fs:move-items", async (_event, { items, targetParentRelativePath
           }
         } else {
           await resetDeletedByPath(newPath);
+        }
+      }
+    }
+
+    // If moving to a project folder, assign the project to the files
+    const projectCode = extractProjectCodeFromPath(targetParentPath);
+    if (projectCode) {
+      for (const move of moved) {
+        const newPath = resolveManagedPath(move.newRelativePath);
+        const stat = await safeStat(newPath);
+        if (stat?.isDirectory()) {
+          const files = await walkDirectory(newPath);
+          for (const file of files) {
+            await updateAssetProjectByPath(file, projectCode);
+          }
+        } else {
+          await updateAssetProjectByPath(newPath, projectCode);
         }
       }
     }
