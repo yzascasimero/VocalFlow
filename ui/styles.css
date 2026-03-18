@@ -34,6 +34,34 @@
   --transition-fast: 0.15s ease-out;
 }
 
+[data-theme="dark"] {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #21262d;
+  --surface-3: #30363d;
+  --text: #f0f6fc;
+  --text-secondary: #c9d1d9;
+  --muted: #8b949e;
+  --border: #30363d;
+  --border-soft: #21262d;
+  --primary: #58a6ff;
+  --primary-strong: #79c0ff;
+  --primary-soft: #0d1117;
+  --primary-hover: #388bfd;
+  --success: #56d364;
+  --success-soft: #0d1117;
+  --danger: #f85149;
+  --danger-soft: #0d1117;
+  --warning: #d29922;
+  --warning-soft: #0d1117;
+  --info: #79c0ff;
+  --info-soft: #0d1117;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.24);
+  --shadow: 0 3px 12px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-xl: 0 12px 32px rgba(0, 0, 0, 0.48);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -531,18 +559,18 @@ img {
 }
 
 .mini-tag.danger {
-  background: #ffe8e8;
+  background: var(--danger-soft);
   color: var(--danger);
 }
 
 .mini-tag.archived {
-  background: #f2f2f2;
+  background: var(--surface-2);
   color: var(--muted);
 }
 
 .mini-tag.info {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: var(--primary-soft);
+  color: var(--primary);
 }
 
 .todo-placeholder {
@@ -597,7 +625,7 @@ img {
 }
 
 .todo-text {
-  color: #1f2937;
+  color: var(--text);
   line-height: 1.4;
   word-break: break-word;
   font-weight: 600;
@@ -605,12 +633,12 @@ img {
 
 .todo-note-indicator {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--muted);
 }
 
 .todo-item.completed .todo-text {
   text-decoration: line-through;
-  color: #9ca3af;
+  color: var(--muted);
 }
 
 .todo-actions {
@@ -659,22 +687,22 @@ img {
 
 .todo-form input {
   height: 52px;
-  border: 1px solid #dddddd;
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 0 18px;
-  background: #ffffff;
+  background: var(--surface);
   outline: none;
   font-size: 15px;
-  color: #111827;
+  color: var(--text);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .todo-form input::placeholder {
-  color: #9ca3af;
+  color: var(--muted);
 }
 
 .todo-form input:focus {
-  border-color: #b7d8f6;
+  border-color: var(--primary-soft);
   box-shadow: 0 0 0 4px rgba(23, 147, 245, 0.08);
 }
 
@@ -703,14 +731,14 @@ img {
 }
 
 .todo-text {
-  color: #1f2937;
+  color: var(--text);
   line-height: 1.4;
   word-break: break-word;
 }
 
 .todo-item.completed .todo-text {
   text-decoration: line-through;
-  color: #9ca3af;
+  color: var(--muted);
 }
 
 .todo-delete {
@@ -802,7 +830,7 @@ img {
   text-align: center;
   font-size: 28px;
   font-weight: 700;
-  color: #111827;
+  color: var(--text);
   letter-spacing: -0.02em;
 }
 
@@ -810,16 +838,16 @@ img {
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  border: 1px solid #e4e4e4;
-  background: #ffffff;
-  color: #1f2937;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
   font-size: 18px;
   transition: all 0.18s ease;
 }
 
 .calendar-controls .icon-btn:hover {
-  background: #f3f7fb;
-  border-color: #d7e7f8;
+  background: var(--surface-2);
+  border-color: var(--border-soft);
 }
 
 .calendar-widget {
@@ -838,7 +866,7 @@ img {
   text-align: center;
   font-size: 13px;
   font-weight: 700;
-  color: #6b7280;
+  color: var(--muted);
   padding: 8px 0;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -853,16 +881,16 @@ img {
 .calendar-day {
   position: relative;
   min-height: 68px;
-  border: 1px solid #e8ebef;
+  border: 1px solid var(--border-soft);
   border-radius: 16px;
-  background: #ffffff;
+  background: var(--surface);
   display: flex;
   align-items: flex-start;
   justify-content: flex-start;
   padding: 12px;
   font-size: 14px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--text);
   transition: all 0.18s ease;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
 }
@@ -1036,7 +1064,7 @@ button.calendar-day:hover {
 }
 
 .crumb-sep {
-  color: #a6a6a6;
+  color: var(--muted);
 }
 
 .folder-grid {
@@ -1358,7 +1386,7 @@ button.calendar-day:hover {
   cursor: pointer;
 
   font-size: 14px;
-  color: #6b7280;
+  color: var(--muted);
 
   transition: var(--transition);
   margin-bottom: 14px;
@@ -1748,4 +1776,56 @@ button.calendar-day:hover {
 
 .section-spacer {
   margin-top: 16px;
+}
+
+/* Theme Toggle */
+.theme-toggle {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 50px;
+  height: 24px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--surface-3);
+  transition: var(--transition);
+  border-radius: 24px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: var(--transition);
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: var(--primary);
+}
+
+input:checked + .slider:before {
+  transform: translateX(26px);
 }

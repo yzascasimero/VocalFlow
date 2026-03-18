@@ -2,6 +2,7 @@ const loginView = document.getElementById("loginView");
 const appView = document.getElementById("appView");
 const loginForm = document.getElementById("loginForm");
 const logoutBtn = document.getElementById("logoutBtn");
+const themeToggle = document.getElementById("themeToggle");
 
 const navItems = document.querySelectorAll(".nav-item[data-section]");
 const pageSections = document.querySelectorAll(".page-section");
@@ -1112,11 +1113,31 @@ archiveUnarchiveBtn?.addEventListener("click", async () => {
   }
 });
 
+// Theme functions
+function setTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('theme', theme);
+  updateLogos(theme);
+}
+
+function updateLogos(theme) {
+  const logos = document.querySelectorAll('.login-logo, .brand-logo');
+  const logoSrc = theme === 'dark' ? './assets/logo_nightmode.png' : './assets/creativoices-logo.png';
+  logos.forEach(logo => logo.src = logoSrc);
+}
+
+function loadTheme() {
+  const savedTheme = localStorage.getItem('theme') || 'light';
+  setTheme(savedTheme);
+  themeToggle.checked = savedTheme === 'dark';
+}
+
 loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
 
   try {
     showApp();
+    loadTheme();
     console.log("About to refreshAll");
     await refreshAll();
     console.log("refreshAll done");
@@ -1131,6 +1152,11 @@ loginForm?.addEventListener("submit", async (e) => {
 
 logoutBtn?.addEventListener("click", () => {
   showLogin();
+});
+
+themeToggle?.addEventListener("change", () => {
+  const theme = themeToggle.checked ? 'dark' : 'light';
+  setTheme(theme);
 });
 
 navItems.forEach((item) => {
@@ -1249,6 +1275,9 @@ addFolderModalSaveBtn?.addEventListener("click", () => {
 addFolderModal?.addEventListener("click", (e) => {
   if (e.target === addFolderModal) closeAddFolderModal();
 });
+
+// Load theme on startup
+loadTheme();
 
 modalTaskTitle?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
