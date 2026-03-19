@@ -479,7 +479,7 @@ img {
 }
 
 .metric-card {
-  background: #f7f7f7;
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   padding: 16px;
@@ -520,7 +520,7 @@ img {
   gap: 12px;
   align-items: center;
   border: 1px solid var(--border-soft);
-  background: #fff;
+  background: var(--surface);
   border-radius: 8px;
   padding: 12px;
 }
@@ -599,7 +599,7 @@ img {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 14px;
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   padding: 16px 18px;
@@ -649,7 +649,7 @@ img {
 
 .todo-view-notes {
   border: none;
-  background: #eaf4ff;
+  background: var(--primary-soft);
   color: var(--primary);
   border-radius: 8px;
   padding: 8px 10px;
@@ -711,7 +711,7 @@ img {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   padding: 12px 14px;
@@ -757,7 +757,7 @@ img {
 }
 
 .todo-empty {
-  background: #ffffff;
+  background: var(--surface);
   border: 1px dashed var(--border-soft);
   border-radius: 12px;
   padding: 16px;
@@ -791,7 +791,7 @@ img {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   padding: 12px 14px;
@@ -808,7 +808,7 @@ img {
   display: flex;
   flex-direction: column;
   min-height: 360px;
-  background: linear-gradient(180deg, #fafafa 0%, #f5f5f5 100%);
+  background: var(--surface);
   border: 1px solid #e7e7e7;
   border-radius: 18px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.04);
@@ -914,7 +914,7 @@ button.calendar-day:hover {
 .calendar-day.today {
   background: linear-gradient(135deg, #1793f5, #0d7fdb);
   border-color: #1793f5;
-  color: #ffffff;
+  color: var(--surface);
   box-shadow: 0 10px 20px rgba(23, 147, 245, 0.22);
 }
 
@@ -938,7 +938,7 @@ button.calendar-day:hover {
 
 .calendar-day.has-event {
   border-color: #dbeafe;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  background: var(--surface);
 }
 
 .calendar-day.has-event::after {
@@ -977,7 +977,7 @@ button.calendar-day:hover {
 
 .log-message {
   font-size: 12px;
-  color: #333;
+  color: var(--text);
 }
 
 /* TABLES */
@@ -1107,7 +1107,7 @@ button.calendar-day:hover {
 }
 
 .talent-card {
-  background: #f7f7f7;
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   padding: 10px;
@@ -1141,7 +1141,7 @@ button.calendar-day:hover {
 .path-item {
   display: grid;
   gap: 6px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   padding: 12px;
@@ -1382,7 +1382,7 @@ button.calendar-day:hover {
   border: 1px solid var(--border-soft);
   border-radius: 14px;
 
-  background: #ffffff;
+  background: var(--surface);
   cursor: pointer;
 
   font-size: 14px;
@@ -1424,7 +1424,7 @@ button.calendar-day:hover {
   top: calc(100% + 8px);
   right: 0;
   min-width: 180px;
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
@@ -1465,7 +1465,7 @@ button.calendar-day:hover {
 }
 
 .folder-card {
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: 12px;
   padding: 14px;
@@ -1564,7 +1564,7 @@ button.calendar-day:hover {
   top: calc(100% + 8px);
   right: 0;
   min-width: 180px;
-  background: #ffffff;
+  background: var(--surface);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
@@ -1604,7 +1604,7 @@ button.calendar-day:hover {
   gap: 12px;
   margin-bottom: 14px;
   padding: 12px 14px;
-  background: #f7f7f7;
+  background: var(--surface-2);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
 }
@@ -1828,4 +1828,8 @@ input:checked + .slider {
 
 input:checked + .slider:before {
   transform: translateX(26px);
+}
+
+[data-theme="dark"] * {
+  color-scheme: dark;
 }

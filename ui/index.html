@@ -329,8 +329,31 @@
             <div>
               <h1>Voice Artists</h1>
             </div>
-            <button class="btn btn-primary">+ Add Talents</button>
+            <button id="addTalentBtn" class="btn btn-primary">+ Add Talents</button>
           </header>
+
+          <div id="addTalentModal" class="modal-overlay">
+  <div class="modal-card">
+
+    <div class="modal-header">
+      <h2>Add Talent</h2>
+      <button id="addTalentModalCloseBtn" class="modal-close" type="button">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <label class="modal-field">
+        <span>Name</span>
+        <input id="talentNameInput" type="text" placeholder="Enter talent name..." />
+      </label>
+    </div>
+
+    <div class="modal-footer">
+      <button id="addTalentCancelBtn" class="btn" type="button">Cancel</button>
+      <button id="addTalentSaveBtn" class="btn btn-primary">Add Talent</button>
+    </div>
+
+  </div>
+</div>
 
           <div class="toolbar">
             <div class="search-wrap">

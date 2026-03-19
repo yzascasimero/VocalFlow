@@ -90,6 +90,19 @@ const addFolderInput = document.getElementById("addFolderInput");
 
 const importFilesBtn = document.getElementById("importFilesBtn");
 const importFolderBtn = document.getElementById("importFolderBtn");
+
+const talentGrid = document.getElementById("talentGrid");
+const addTalentBtn = document.getElementById("addTalentBtn");
+
+const addTalentModal = document.getElementById("addTalentModal");
+const addTalentModalCloseBtn = document.getElementById("addTalentModalCloseBtn");
+const addTalentCancelBtn = document.getElementById("addTalentCancelBtn");
+const addTalentSaveBtn = document.getElementById("addTalentSaveBtn");
+const talentNameInput = document.getElementById("talentNameInput");
+
+const TALENT_STORAGE_KEY = "vocalflow_talents_v1";
+let talentStore = loadTalents();
+
 let calendarDate = new Date();
 let selectedDate = new Date();
 let currentProjectPath = "Projects";
@@ -985,6 +998,49 @@ function bindSearch() {
   }
 }
 
+function loadTalents() {
+  try {
+    const raw = localStorage.getItem(TALENT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTalents() {
+  localStorage.setItem(TALENT_STORAGE_KEY, JSON.stringify(talentStore));
+}
+
+function renderTalents() {
+  if (!talentGrid) return;
+
+  if (!talentStore.length) {
+    talentGrid.innerHTML = `<div class="empty-mini">No talents yet.</div>`;
+    return;
+  }
+
+  talentGrid.innerHTML = talentStore.map(talent => `
+    <article class="talent-card">
+      <div class="talent-avatar"></div>
+      <h3>${escapeHtml(talent.name)}</h3>
+      <button class="btn btn-primary btn-small">See Details</button>
+    </article>
+  `).join("");
+}
+
+function openAddTalentModal() {
+  talentNameInput.value = "";
+  addTalentModal.classList.add("active");
+
+  setTimeout(() => {
+    talentNameInput.focus();
+  }, 50);
+}
+
+function closeAddTalentModal() {
+  addTalentModal.classList.remove("active");
+}
+
 async function moveSelectedInboxItems(targetRelativeFolder) {
   const selected = getSelectedInboxItems();
 
@@ -1467,6 +1523,35 @@ projectsFolderGrid?.addEventListener("click", async (e) => {
   }
 });
 
+//add talent button
+
+addTalentBtn?.addEventListener("click", () => {
+  openAddTalentModal();
+});
+
+//save talent 
+addTalentSaveBtn?.addEventListener("click", () => {
+  const name = talentNameInput.value.trim();
+  if (!name) return;
+
+  talentStore.push({
+    id: Date.now(),
+    name
+  });
+
+  saveTalents();
+  renderTalents();
+  closeAddTalentModal();
+});
+
+//close modal events
+addTalentModalCloseBtn?.addEventListener("click", closeAddTalentModal);
+addTalentCancelBtn?.addEventListener("click", closeAddTalentModal);
+
+addTalentModal?.addEventListener("click", (e) => {
+  if (e.target === addTalentModal) closeAddTalentModal();
+});
+
 //breadcrumbs
 projectsFolderGrid?.addEventListener("click", async (e) => {
   const card = e.target.closest(".folder-card");
@@ -1598,3 +1683,4 @@ renderCalendar(calendarDate);
 renderTodoList();
 updateInboxActionState();
 showLogin();
+renderTalents();
