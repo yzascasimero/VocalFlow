@@ -1833,3 +1833,38 @@ input:checked + .slider:before {
 [data-theme="dark"] * {
   color-scheme: dark;
 }
+
+/* ── Projects back button + breadcrumb row ─────────────────────────── */
+.projects-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  font-size: 13px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.btn-back:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.back-arrow {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.projects-nav-row .breadcrumbs {
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}

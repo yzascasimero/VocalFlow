@@ -18,8 +18,10 @@ const { spawn } = require("child_process");
 
 const {
   initDatabase,
+  closeDatabase,
   ensureDrive,
   upsertAsset,
+  deleteAssetByPath,
   markMissingByPath,
   markDeletedByPath,
   resetDeletedByPath,
@@ -31,8 +33,15 @@ const {
 
 let mainWindow = null;
 let watcher = null;
+let intakeSorter = null;
 
-const APP_ROOT = path.join(app.getPath("documents"), "VocalFlow");
+// Dev (`npm start`): data lives next to the app (this folder). Packaged: use Documents\VocalFlow.
+// Override with VOCALFLOW_APP_ROOT if needed.
+const APP_ROOT = process.env.VOCALFLOW_APP_ROOT
+  ? path.resolve(process.env.VOCALFLOW_APP_ROOT)
+  : app.isPackaged
+    ? path.join(app.getPath("documents"), "VocalFlow")
+    : path.resolve(__dirname);
 const INTAKE_DIR = path.join(APP_ROOT, "VocalFlow_Intake");
 const PROJECTS_DIR = path.join(APP_ROOT, "Projects");
 const ARCHIVE_DIR = path.join(APP_ROOT, "Archive");
@@ -121,13 +130,24 @@ function createWindow() {
     }
   });
 
-  mainWindow.webContents.openDevTools();
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools();
+  }
 
   mainWindow.loadFile(path.join(__dirname, "ui", "index.html"));
 }
 
 async function ensureDirectories() {
-  for (const dir of [APP_ROOT, INTAKE_DIR, PROJECTS_DIR, ARCHIVE_DIR, path.join(ARCHIVE_DIR, "Deleted"), EXTRACTED_DIR]) {
+  for (const dir of [
+    APP_ROOT,
+    INTAKE_DIR,
+    PROJECTS_DIR,
+    path.join(APP_ROOT, "Images"),
+    path.join(APP_ROOT, "Others"),
+    ARCHIVE_DIR,
+    path.join(ARCHIVE_DIR, "Deleted"),
+    EXTRACTED_DIR
+  ]) {
     await fsp.mkdir(dir, { recursive: true });
   }
 }
@@ -176,6 +196,46 @@ function getDriveRoot(filePath) {
 function getDriveNameFromPath(filePath) {
   const root = getDriveRoot(filePath).replace(/\\+$/, "");
   return root || "Local Drive";
+}
+
+function startIntakeSorter() {
+  const scriptPath = path.join(__dirname, "main.py");
+  const python = getPythonCommand();
+  const args = [...python.argsPrefix, scriptPath];
+
+  intakeSorter = spawn(python.cmd, args, {
+    windowsHide: true,
+    cwd: __dirname,
+    env: {
+      ...process.env,
+      VOCALFLOW_APP_ROOT: APP_ROOT,
+      // Windows piped stdout defaults to cp1252; emoji in main.py would crash before initial_scan.
+      PYTHONIOENCODING: "utf-8"
+    }
+  });
+
+  console.log(`Intake sorter started (pid ${intakeSorter.pid}) — APP_ROOT=${APP_ROOT}`);
+
+  intakeSorter.stdout?.on("data", (chunk) => {
+    const line = chunk.toString().trim();
+    if (line) console.log("[intake-sorter]", line);
+  });
+
+  intakeSorter.stderr?.on("data", (chunk) => {
+    const line = chunk.toString().trim();
+    if (line) console.error("[intake-sorter]", line);
+  });
+
+  intakeSorter.on("error", (err) => {
+    console.error("Intake sorter failed to start:", err.message);
+    intakeSorter = null;
+  });
+
+  intakeSorter.on("exit", (code, signal) => {
+    if (signal === "SIGTERM" || signal === "SIGKILL") return;
+    console.warn(`Intake sorter exited (code ${code ?? "null"})`);
+    intakeSorter = null;
+  });
 }
 
 async function runAnalytics(filePath) {
@@ -249,6 +309,18 @@ async function processSingleFile(filePath, intakeSource = "watcher") {
       };
     });
 
+    // If the file was auto-sorted into `Projects/<project_code>/...`, analytics.py may
+    // still fail to detect the project. In that case, fall back to the folder name
+    // so the inbox UI can classify it as "Assigned".
+    const pathProjectCode = extractProjectCodeFromPath(filePath);
+    const resolvedProjectCode = analytics.project_code || pathProjectCode || null;
+    const resolvedProjectName = analytics.project_name || resolvedProjectCode || null;
+    const analyticsResolved = {
+      ...analytics,
+      project_code: resolvedProjectCode,
+      project_name: resolvedProjectName
+    };
+
     const fileHash = await computeFileHash(filePath);
     const driveRoot = getDriveRoot(filePath);
     const driveId = await ensureDrive(getDriveNameFromPath(filePath), driveRoot);
@@ -262,12 +334,12 @@ async function processSingleFile(filePath, intakeSource = "watcher") {
       mtime_ms: Math.floor(stat.mtimeMs),
       file_hash: fileHash,
       drive_id: driveId,
-      project_code: analytics.project_code || null,
-      project_name: analytics.project_name || null,
+      project_code: resolvedProjectCode,
+      project_name: resolvedProjectName,
       episode_number: analytics.episode_number || null,
       asset_type: analytics.asset_type || path.extname(filePath).replace(".", ""),
       intake_source: intakeSource,
-      analytics_json: JSON.stringify(analytics)
+      analytics_json: JSON.stringify(analyticsResolved)
     };
 
     await upsertAsset(assetPayload);
@@ -279,7 +351,12 @@ async function processSingleFile(filePath, intakeSource = "watcher") {
 
 async function handleUnlink(filePath) {
   try {
-    await markMissingByPath(filePath);
+    // FIX: Hard-delete the row instead of marking is_missing=1.
+    // When Python's sorter moves a file out of intake, Chokidar fires
+    // unlink on the old path. Keeping is_missing=1 creates a ghost row
+    // the inbox keeps showing and that fs:delete-item can't remove
+    // (safeStat returns null for the already-moved file).
+    await deleteAssetByPath(filePath);
     notifyRenderer("db:updated", { filePath, missing: true });
   } catch (err) {
     console.error("handleUnlink error:", err);
@@ -321,6 +398,62 @@ async function walkDirectory(dir) {
 
   await walk(dir);
   return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// sortingOutcome: waits up to `timeoutMs` for the Python sorter to move a
+// file out of intake (i.e. its DB record's file_path changes or it disappears
+// from the intake dir).  Returns where the file ended up and whether it was
+// recognised/matched to a project folder.
+// ---------------------------------------------------------------------------
+async function waitForSortOutcome(intakePath, timeoutMs = 12000) {
+  const start = Date.now();
+  const pollMs = 400;
+  const fileName = path.basename(intakePath);
+
+  while (Date.now() - start < timeoutMs) {
+    await new Promise(r => setTimeout(r, pollMs));
+
+    // If the file is still in intake the sorter hasn't moved it yet (or won't).
+    const stillInIntake = await fileExists(intakePath);
+
+    if (!stillInIntake) {
+      // File moved — find its new location from the DB by file_name + hash
+      // (the add-event will have upserted it at the new path by now).
+      const { db } = require("./database");
+      const row = await new Promise((res, rej) => {
+        db.get(
+          `SELECT file_path, project_id FROM assets
+           WHERE file_name = ? AND is_missing = 0 AND is_deleted = 0
+           ORDER BY updated_at DESC LIMIT 1`,
+          [fileName],
+          (err, r) => err ? rej(err) : res(r)
+        );
+      });
+      if (row) {
+        const newPath = row.file_path;
+        const inProjects = isPathInside(PROJECTS_DIR, newPath);
+        return { moved: true, finalPath: newPath, inProjects, recognized: inProjects };
+      }
+      return { moved: true, finalPath: null, inProjects: false, recognized: false };
+    }
+  }
+
+  // Timed out — file stayed in intake, sorter couldn't match it.
+  return { moved: false, finalPath: intakePath, inProjects: false, recognized: false };
+}
+
+// Build a human-readable activity log entry for an import outcome.
+function buildActivityEntry(fileName, outcome) {
+  if (outcome.recognized && outcome.finalPath) {
+    const rel = path.relative(APP_ROOT, outcome.finalPath);
+    return { label: "sorted", message: `"${fileName}" sorted → ${rel}` };
+  }
+  if (outcome.moved && !outcome.recognized) {
+    return { label: "sorted", message: `"${fileName}" moved but not matched to a project` };
+  }
+  return { label: "inbox", message: `"${fileName}" placed in inbox for review` };
 }
 
 function setupWatcher() {
@@ -597,16 +730,17 @@ ipcMain.handle("fs:delete-item", async (_event, { relativePath }) => {
     const targetPath = resolveManagedPath(relativePath);
     const stat = await safeStat(targetPath);
 
-    if (!stat) {
-      throw new Error("Item not found.");
-    }
-
-    const filePaths = stat.isDirectory() ? await walkDirectory(targetPath) : [targetPath];
-
-    await removePathRecursive(targetPath);
-
-    for (const filePath of filePaths) {
-      await markDeletedByPath(filePath);
+    if (stat) {
+      // File/folder exists on disk — remove it and mark all children deleted.
+      const filePaths = stat.isDirectory() ? await walkDirectory(targetPath) : [targetPath];
+      await removePathRecursive(targetPath);
+      for (const filePath of filePaths) {
+        await markDeletedByPath(filePath);
+      }
+    } else {
+      // FIX: File is already gone from disk (moved by the Python sorter).
+      // Don't throw — just purge the ghost DB row so the inbox clears.
+      await deleteAssetByPath(targetPath);
     }
 
     notifyRenderer("fs:changed", {
@@ -661,27 +795,46 @@ ipcMain.handle("fs:import-files", async () => {
 
     if (result.canceled) return { ok: false, canceled: true };
 
-    const copied = [];
+    const outcomes = [];
+    const errors = [];
 
     for (const file of result.filePaths) {
       const fileName = path.basename(file);
-      const destination = path.join(INTAKE_DIR, fileName);
+      const intakeDest = path.join(INTAKE_DIR, fileName);
 
-      if (await safeStat(destination)) {
-        throw new Error(`File already exists: ${fileName}`);
+      // Skip duplicates rather than aborting the whole batch.
+      if (await safeStat(intakeDest)) {
+        errors.push({ file: fileName, error: "Already exists in intake" });
+        continue;
       }
 
-      await fsp.copyFile(file, destination);
-      copied.push(destination);
-      await processSingleFile(destination, "import_files");
+      // 1. Copy into intake so the Python sorter can see it.
+      await fsp.copyFile(file, intakeDest);
+
+      // 2. Register in DB immediately so the inbox can show it while sorting.
+      await processSingleFile(intakeDest, "import_files");
+
+      // 3. Wait for the Python sorter to move it to its rightful folder.
+      const outcome = await waitForSortOutcome(intakeDest);
+      const activity = buildActivityEntry(fileName, outcome);
+
+      outcomes.push({
+        fileName,
+        intakePath: path.relative(APP_ROOT, intakeDest),
+        finalPath: outcome.finalPath ? path.relative(APP_ROOT, outcome.finalPath) : null,
+        recognized: outcome.recognized,
+        inProjects: outcome.inProjects,
+        activity
+      });
     }
 
     notifyRenderer("fs:changed", {
       type: "files-imported",
-      files: copied.map((file) => path.relative(APP_ROOT, file))
+      outcomes,
+      errors
     });
 
-    return { ok: true, files: copied };
+    return { ok: true, outcomes, errors };
   } catch (error) {
     return { ok: false, error: error.message };
   }
@@ -697,25 +850,45 @@ ipcMain.handle("fs:import-folder", async () => {
 
     const sourceFolder = result.filePaths[0];
     const folderName = path.basename(sourceFolder);
-    const destination = path.join(INTAKE_DIR, folderName);
+    const intakeDest = path.join(INTAKE_DIR, folderName);
 
-    if (await safeStat(destination)) {
-      throw new Error(`Folder already exists: ${folderName}`);
+    if (await safeStat(intakeDest)) {
+      throw new Error(`Folder already exists in intake: ${folderName}`);
     }
 
-    await fsp.cp(sourceFolder, destination, { recursive: true });
+    // 1. Copy the whole folder into intake.
+    await fsp.cp(sourceFolder, intakeDest, { recursive: true });
 
-    const importedFiles = await walkDirectory(destination);
+    // 2. Register all files in DB so the inbox can show them.
+    const importedFiles = await walkDirectory(intakeDest);
     for (const filePath of importedFiles) {
       await processSingleFile(filePath, "import_folder");
     }
 
+    // 3. Wait for each file's sort outcome.
+    const outcomes = [];
+    for (const filePath of importedFiles) {
+      const fileName = path.basename(filePath);
+      const outcome = await waitForSortOutcome(filePath);
+      const activity = buildActivityEntry(fileName, outcome);
+      outcomes.push({
+        fileName,
+        intakePath: path.relative(APP_ROOT, filePath),
+        finalPath: outcome.finalPath ? path.relative(APP_ROOT, outcome.finalPath) : null,
+        recognized: outcome.recognized,
+        inProjects: outcome.inProjects,
+        activity
+      });
+    }
+
     notifyRenderer("fs:changed", {
       type: "folder-imported",
-      relativePath: path.relative(APP_ROOT, destination)
+      folderName,
+      relativePath: path.relative(APP_ROOT, intakeDest),
+      outcomes
     });
 
-    return { ok: true, folder: destination };
+    return { ok: true, folder: intakeDest, outcomes };
   } catch (error) {
     return { ok: false, error: error.message };
   }
@@ -836,15 +1009,17 @@ ipcMain.handle("fs:delete-items", async (_event, { items }) => {
     for (const relativePath of items) {
       const targetPath = resolveManagedPath(relativePath);
       const stat = await safeStat(targetPath);
-      if (!stat) continue;
 
-      // Capture all file paths under a folder so we can mark them deleted later.
-      const filePaths = stat.isDirectory() ? await walkDirectory(targetPath) : [targetPath];
-
-      await removePathRecursive(targetPath);
-
-      for (const filePath of filePaths) {
-        await markDeletedByPath(filePath);
+      if (stat) {
+        // File/folder is on disk — remove it and mark DB records deleted.
+        const filePaths = stat.isDirectory() ? await walkDirectory(targetPath) : [targetPath];
+        await removePathRecursive(targetPath);
+        for (const filePath of filePaths) {
+          await markDeletedByPath(filePath);
+        }
+      } else {
+        // FIX: Already gone from disk — just purge the ghost DB row.
+        await deleteAssetByPath(targetPath);
       }
 
       deleted.push(relativePath);
@@ -913,8 +1088,11 @@ app.whenReady().then(async () => {
   await ensureDirectories();
   await initDatabase();
   createWindow();
-  // await initialScan(); // disabled for debugging
+  await initialScan();
   setupWatcher();
+  // Start after chokidar is running so it can observe `unlink`/`add` events
+  // triggered by the Python intake sorter.
+  startIntakeSorter();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -925,8 +1103,24 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", async () => {
-  if (watcher) {
-    await watcher.close();
-  }
+// FIX: Use will-quit + preventDefault so async cleanup is actually awaited
+// before the process exits. before-quit is not awaited by Electron.
+app.on("will-quit", (e) => {
+  e.preventDefault();
+  (async () => {
+    try {
+      if (intakeSorter && !intakeSorter.killed) {
+        intakeSorter.kill();
+        intakeSorter = null;
+      }
+      if (watcher) {
+        await watcher.close();
+      }
+      await closeDatabase();
+    } catch (err) {
+      console.error("Cleanup error on quit:", err);
+    } finally {
+      app.exit(0);
+    }
+  })();
 });

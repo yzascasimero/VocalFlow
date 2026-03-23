@@ -82,7 +82,7 @@ async function initDatabase() {
     )
   `);
 
-  // Add column if schema already existed without it (migration path)
+  // Migration: add is_deleted if schema predates it
   const existingCols = await all(`PRAGMA table_info(assets)`);
   if (!existingCols.some((col) => col.name === "is_deleted")) {
     await run(`ALTER TABLE assets ADD COLUMN is_deleted INTEGER DEFAULT 0`);
@@ -166,6 +166,7 @@ async function upsertAsset(asset) {
            intake_source = ?,
            analytics_json = ?,
            is_missing = 0,
+           is_deleted = 0,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
       [
@@ -209,6 +210,7 @@ async function upsertAsset(asset) {
              intake_source = ?,
              analytics_json = ?,
              is_missing = 0,
+             is_deleted = 0,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [
@@ -246,8 +248,9 @@ async function upsertAsset(asset) {
       asset_type,
       intake_source,
       analytics_json,
-      is_missing
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+      is_missing,
+      is_deleted
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
     [
       file_name,
       file_path,
@@ -266,6 +269,15 @@ async function upsertAsset(asset) {
   );
 
   return result.lastID;
+}
+
+// FIX 1: Hard-delete a DB row by file path.
+// Used by handleUnlink so moved files don't leave ghost rows in the inbox.
+async function deleteAssetByPath(filePath) {
+  await run(
+    `DELETE FROM assets WHERE file_path = ?`,
+    [filePath]
+  );
 }
 
 async function markMissingByPath(filePath) {
@@ -289,10 +301,12 @@ async function markDeletedByPath(filePath) {
   );
 }
 
+// FIX 2: Also clear is_missing when unarchiving a file, not just is_deleted.
 async function resetDeletedByPath(filePath) {
   await run(
     `UPDATE assets
      SET is_deleted = 0,
+         is_missing = 0,
          updated_at = CURRENT_TIMESTAMP
      WHERE file_path = ?`,
     [filePath]
@@ -322,6 +336,8 @@ async function getDashboardStats() {
   return stats;
 }
 
+// FIX 3: Exclude ghost rows (is_missing=1 or is_deleted=1) so the inbox
+// never shows files that have been moved or removed.
 async function listAssets() {
   return all(`
     SELECT
@@ -342,6 +358,8 @@ async function listAssets() {
       p.project_name
     FROM assets a
     LEFT JOIN projects p ON a.project_id = p.id
+    WHERE a.is_missing = 0
+      AND a.is_deleted = 0
     ORDER BY a.updated_at DESC
     LIMIT 500
   `);
@@ -357,18 +375,30 @@ async function listProjects() {
       p.updated_at,
       COUNT(a.id) AS asset_count
     FROM projects p
-    LEFT JOIN assets a ON a.project_id = p.id AND a.is_missing = 0
+    LEFT JOIN assets a ON a.project_id = p.id AND a.is_missing = 0 AND a.is_deleted = 0
     GROUP BY p.id
     ORDER BY p.updated_at DESC
   `);
 }
 
+// Export closeDatabase so the quit handler can close the connection cleanly.
+function closeDatabase() {
+  return new Promise((resolve, reject) => {
+    db.close((err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+}
+
 module.exports = {
   db,
   initDatabase,
+  closeDatabase,
   ensureDrive,
   ensureProject,
   upsertAsset,
+  deleteAssetByPath,
   markMissingByPath,
   markDeletedByPath,
   resetDeletedByPath,

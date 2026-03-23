@@ -21,6 +21,7 @@ const projectsFolderGrid = document.getElementById("projectsFolderGrid");
 const projectBreadcrumbs = document.getElementById("projectBreadcrumbs");
 const rescanBtn = document.getElementById("rescanBtn");
 const addFolderBtn = document.getElementById("addFolderBtn");
+const projectsBackBtn = document.getElementById("projectsBackBtn");
 
 const inboxSearch = document.getElementById("inboxSearch");
 const inboxSearchBtn = document.getElementById("inboxSearchBtn");
@@ -106,6 +107,7 @@ let talentStore = loadTalents();
 let calendarDate = new Date();
 let selectedDate = new Date();
 let currentProjectPath = "Projects";
+let projectPathHistory = [];   // stack of paths for back-button navigation
 let currentInboxFilter = "active";
 
 let selectedInboxItems = new Set();
@@ -270,6 +272,35 @@ function addLog(target, message) {
   target.prepend(row);
 }
 
+// addRecentActivity: writes a timestamped entry to both the event log and the
+// analytics feed with a semantic label (sorted / inbox / removed / error).
+const ACTIVITY_LABEL_CLASS = {
+  sorted:  "info",
+  inbox:   "success",
+  removed: "archived",
+  error:   "danger"
+};
+
+function addRecentActivity(label, message) {
+  if (!eventLog && !analyticsFeed) return;
+
+  const cls   = ACTIVITY_LABEL_CLASS[label] || "info";
+  const time  = new Date().toLocaleTimeString();
+  const html  = `
+    <span class="log-time">${time}</span>
+    <span class="mini-tag ${cls}" style="font-size:11px;padding:1px 6px;margin:0 4px;">${escapeHtml(label)}</span>
+    <span class="log-message">${escapeHtml(message)}</span>
+  `;
+
+  [eventLog, analyticsFeed].forEach(target => {
+    if (!target) return;
+    const row = document.createElement("div");
+    row.className = "log-entry";
+    row.innerHTML = html;
+    target.prepend(row);
+  });
+}
+
 function renderActionList(assets) {
   if (!actionList) return;
 
@@ -298,26 +329,30 @@ function renderActionList(assets) {
 }
 
 function getInboxStatus(item) {
-  if (item.is_deleted === true) {
+  // FIX: SQLite returns integers (0/1) not booleans — use truthy checks, not === true.
+  if (item.is_deleted) {
     return { label: "Deleted", className: "danger" };
   }
 
-  if (item.is_missing === true) {
+  if (item.is_missing) {
     return { label: "Missing", className: "danger" };
   }
 
-  // Check if the file is in the Archive folder by looking at the file_path
   const filePathLower = (item.file_path || "").toLowerCase();
-  const isArchived = filePathLower.includes("\\archive\\") || filePathLower.includes("/archive/") || filePathLower.endsWith("\\archive") || filePathLower.endsWith("/archive");
+  const isArchived =
+    filePathLower.includes("\\archive\\") ||
+    filePathLower.includes("/archive/") ||
+    filePathLower.endsWith("\\archive") ||
+    filePathLower.endsWith("/archive");
 
   if (isArchived) {
     return { label: "Archived", className: "archived" };
   }
 
-  const isAssigned = item.project_code ? true : false;
-  if (isAssigned) {
+  if (item.project_code) {
     return { label: "Assigned", className: "info" };
   }
+
   return { label: "Unassigned", className: "success" };
 }
 
@@ -337,9 +372,21 @@ function renderInboxTables(files, folders) {
     return bDate - aDate;
   });
 
-  // Separate active (unassigned) and assigned items
-  const activeItems = allItems.filter(item => !item.project_code);
-  const assignedItems = allItems.filter(item => item.project_code);
+  // FIX: Separate active vs assigned, explicitly excluding archived/deleted/missing
+  // from the active inbox so they never show up as ghost rows.
+  const activeItems = allItems.filter(item => {
+    if (item.is_deleted || item.is_missing) return false;
+    const s = getInboxStatus(item);
+    if (s.className === "archived" || s.className === "danger") return false;
+    return !item.project_code;
+  });
+
+  const assignedItems = allItems.filter(item => {
+    if (item.is_deleted || item.is_missing) return false;
+    const s = getInboxStatus(item);
+    if (s.className === "archived" || s.className === "danger") return false;
+    return !!item.project_code;
+  });
 
   // Helper function to render inbox table rows
   const renderInboxRows = (items, showCheckboxes = true) => {
@@ -482,6 +529,21 @@ function renderBreadcrumbs(relativePath) {
   }
 
   projectBreadcrumbs.innerHTML = crumbs.join("");
+
+  // Wire up crumb button clicks — also reset history up to the clicked crumb.
+  projectBreadcrumbs.querySelectorAll(".crumb-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const targetPath = btn.dataset.path || "Projects";
+      // Trim history to only paths that are ancestors of targetPath.
+      projectPathHistory = projectPathHistory.filter((p) => {
+        const t = (targetPath || "Projects").replace(/\\/g, "/");
+        const h = (p || "Projects").replace(/\\/g, "/");
+        return h !== t && t.startsWith(h + "/");
+      });
+      await loadProjectDirectory(targetPath, false);
+      updateBackButton();
+    });
+  });
 }
 
 function renderDirectoryItems(items) {
@@ -511,7 +573,7 @@ function renderDirectoryItems(items) {
   `).join("");
 }
 
-async function loadProjectDirectory(relativePath = "Projects") {
+async function loadProjectDirectory(relativePath = "Projects", pushHistory = true) {
   const result = await window.vocalflowAPI.listDirectory(relativePath);
 
   if (!result.ok) {
@@ -519,9 +581,30 @@ async function loadProjectDirectory(relativePath = "Projects") {
     return;
   }
 
+  // Push the previous path onto the history stack before navigating forward.
+  if (pushHistory && currentProjectPath !== (result.currentPath || "")) {
+    projectPathHistory.push(currentProjectPath);
+  }
+
   currentProjectPath = result.currentPath || "";
   renderBreadcrumbs(currentProjectPath);
   renderDirectoryItems(result.items);
+  updateBackButton();
+}
+
+function updateBackButton() {
+  if (!projectsBackBtn) return;
+  // Disable when at the root ("Projects" or "") — nothing to go back to.
+  const atRoot = !currentProjectPath || currentProjectPath === "Projects";
+  projectsBackBtn.disabled = atRoot || projectPathHistory.length === 0;
+}
+
+async function navigateBack() {
+  if (projectPathHistory.length === 0) return;
+  const prev = projectPathHistory.pop();
+  // Navigate without pushing to history (we're going backwards).
+  await loadProjectDirectory(prev || "Projects", false);
+  updateBackButton();
 }
 
 function renderProjects(projects) {
@@ -581,10 +664,13 @@ async function loadStats() {
     const missingAssets = document.getElementById("statMissingAssets");
 
     // Count active unassigned intakes from cached data
+    // FIX: Exclude missing/deleted rows from stat count.
     const activeUnassignedCount = ((cachedAssets || []).filter((asset) => {
+      if (asset.is_missing || asset.is_deleted) return false;
       const status = getInboxStatus(asset);
       return status.className === "success" && !asset.project_code;
     }).length) + ((cachedInboxFolders || []).filter((folder) => {
+      if (folder.is_missing || folder.is_deleted) return false;
       const status = getInboxStatus(folder);
       return status.className === "success" && !folder.project_code;
     }).length);
@@ -625,12 +711,15 @@ function updateInboxBadge() {
   if (!inboxBadge) return;
 
   // Count active intakes: unassigned files that are not missing + not archived + unassigned folders
+  // FIX: Exclude ghost/missing/deleted rows from the badge count.
   const activeFiles = (cachedAssets || []).filter((item) => {
+    if (item.is_missing || item.is_deleted) return false;
     const status = getInboxStatus(item);
     return status.className === "success" && !item.project_code;
   }).length;
 
   const activeFolders = (cachedInboxFolders || []).filter((item) => {
+    if (item.is_missing || item.is_deleted) return false;
     const status = getInboxStatus(item);
     return status.className === "success" && !item.project_code;
   }).length;
@@ -920,7 +1009,7 @@ function applyInboxFilters() {
     files = [];
   } else if (currentInboxFilter === "missing") {
     folders = [];
-    files = files.filter((item) => item.is_missing === true && item.is_deleted !== true);
+    files = files.filter((item) => item.is_missing && !item.is_deleted);
   }
 
   const visiblePaths = new Set([
@@ -1093,21 +1182,46 @@ async function deleteSelectedInboxItems() {
 
   if (!confirmed) return;
 
-  const relativePaths = selected.map((item) => item.relative_path);
+  // FIX: Split selected items into "on disk" vs "ghost" (already moved/missing).
+  // Ghost files cannot be moved to Archive/Deleted because they no longer exist
+  // on disk — fs:move-items would throw. Call deleteItems for those instead,
+  // which now gracefully purges just the DB row.
+  const onDisk = selected.filter(item => !item.is_missing && !item.is_deleted);
+  const ghosts = selected.filter(item => item.is_missing || item.is_deleted);
 
-  // Move to Archive/Deleted instead of deleting
-  const result = await window.vocalflowAPI.moveItems(relativePaths, "Archive/Deleted");
+  const onDiskPaths = onDisk.map(item => item.relative_path);
+  const ghostPaths  = ghosts.map(item => item.relative_path);
 
-  if (!result?.ok) {
-    showMessage(result?.error || "Delete failed.");
-    return;
+  let deletedCount = 0;
+  let anyError = null;
+
+  if (onDiskPaths.length) {
+    const result = await window.vocalflowAPI.moveItems(onDiskPaths, "Archive/Deleted");
+    if (!result?.ok) {
+      anyError = result?.error || "Move to deleted failed.";
+    } else {
+      deletedCount += result.moved?.length || onDiskPaths.length;
+    }
+  }
+
+  if (ghostPaths.length) {
+    const result = await window.vocalflowAPI.deleteItems(ghostPaths);
+    if (!result?.ok) {
+      anyError = anyError || result?.error || "Ghost purge failed.";
+    } else {
+      deletedCount += result.deleted?.length || ghostPaths.length;
+    }
+  }
+
+  if (anyError) {
+    showMessage(anyError);
   }
 
   selectedInboxItems.clear();
 
-  const deletedCount = result.moved?.length || relativePaths.length;
-
-  alert(`${deletedCount} item(s) moved to deleted.`);
+  if (deletedCount) {
+    alert(`${deletedCount} item(s) removed from inbox.`);
+  }
 
   await refreshAll();
   await loadProjectDirectory("Projects");
@@ -1159,7 +1273,7 @@ archiveUnarchiveBtn?.addEventListener("click", async () => {
       alert(`Successfully unarchived ${itemsToUnarchive.length} item(s).`);
       selectedArchiveItems.clear();
       updateArchiveActionState();
-      await loadArchiveData();
+      await refreshAll();
     } else {
       alert(`Failed to unarchive items: ${result?.error}`);
     }
@@ -1610,6 +1724,10 @@ projectsFolderGrid?.addEventListener("click", async (e) => {
 });
 
 //create folder
+projectsBackBtn?.addEventListener("click", async () => {
+  await navigateBack();
+});
+
 addFolderBtn?.addEventListener("click", async () => {
   openAddFolderModal(async (folderName) => {
     const result = await window.vocalflowAPI.createFolder(
@@ -1644,7 +1762,27 @@ importFilesBtn?.addEventListener("click", async () => {
     return;
   }
 
-  alert(`Imported ${result.files.length} file(s).`);
+  const outcomes = result.outcomes || [];
+  const errors   = result.errors   || [];
+
+  // Log each file's sort outcome to Recent Activity immediately.
+  outcomes.forEach(o => {
+    addRecentActivity(o.activity.label, o.activity.message);
+  });
+  errors.forEach(e => {
+    addRecentActivity("error", `"${e.file}" skipped — ${e.error}`);
+  });
+
+  // Build a summary for the user.
+  const sorted   = outcomes.filter(o => o.recognized).length;
+  const inbox    = outcomes.filter(o => !o.recognized).length;
+  const errCount = errors.length;
+
+  let msg = `${outcomes.length} file(s) imported.`;
+  if (sorted)   msg += `\n• ${sorted} sorted to project folder(s).`;
+  if (inbox)    msg += `\n• ${inbox} placed in inbox for review.`;
+  if (errCount) msg += `\n• ${errCount} skipped (already exist).`;
+  alert(msg);
 
   await refreshAll();
 });
@@ -1660,7 +1798,24 @@ importFolderBtn?.addEventListener("click", async () => {
     return;
   }
 
-  alert(`Imported folder successfully.`);
+  const outcomes = result.outcomes || [];
+
+  // Log each file's sort outcome to Recent Activity.
+  outcomes.forEach(o => {
+    addRecentActivity(o.activity.label, o.activity.message);
+  });
+
+  if (!outcomes.length) {
+    addRecentActivity("inbox", `Folder imported — no files to sort`);
+  }
+
+  const sorted = outcomes.filter(o => o.recognized).length;
+  const inbox  = outcomes.filter(o => !o.recognized).length;
+
+  let msg = `Folder imported (${outcomes.length} file(s)).`;
+  if (sorted) msg += `\n• ${sorted} sorted to project folder(s).`;
+  if (inbox)  msg += `\n• ${inbox} placed in inbox for review.`;
+  alert(msg);
 
   await refreshAll();
 });
@@ -1672,7 +1827,29 @@ window.vocalflowAPI?.onZipExtracted?.(async (payload) => {
 });
 
 window.vocalflowAPI?.onFilesystemChanged?.(async (payload) => {
-  addLog(analyticsFeed, `Filesystem changed: ${payload?.type || "update"}`);
+  const type = payload?.type || "update";
+
+  // For import events, outcomes are already logged by the button handler above.
+  // For watcher-driven events (sorter moved a file autonomously), log them here.
+  if (type === "file-added") {
+    addRecentActivity("sorted", `File added: ${payload.relativePath || ""}`);
+  } else if (type === "file-removed") {
+    addRecentActivity("removed", `File removed: ${payload.relativePath || ""}`);
+  } else if (type === "file-changed") {
+    addRecentActivity("sorted", `File updated: ${payload.relativePath || ""}`);
+  } else if (type === "directory-added") {
+    addRecentActivity("sorted", `Folder created: ${payload.relativePath || ""}`);
+  } else if (type === "items-moved") {
+    const moves = payload.moved || [];
+    moves.forEach(m => {
+      addRecentActivity("sorted", `Moved: ${m.oldRelativePath} → ${m.newRelativePath}`);
+    });
+  } else if (type === "items-deleted" || type === "item-deleted") {
+    const items = payload.deleted || (payload.relativePath ? [payload.relativePath] : []);
+    items.forEach(p => addRecentActivity("removed", `Deleted: ${p}`));
+  } else {
+    addLog(analyticsFeed, `Filesystem changed: ${type}`);
+  }
 
   await refreshAll();
   await loadProjectDirectory(currentProjectPath || "Projects");
