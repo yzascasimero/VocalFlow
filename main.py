@@ -43,10 +43,10 @@ class SortHandler(FileSystemEventHandler):
         self._recently_processed_at = {}
 
     def on_modified(self, event):
-        # Some Windows copy operations emit "created" before the file is fully written.
-        # Process on modified too, but debounced/in-flight guarded.
+        # FIX: force=True bypasses the debounce so a modify event that fires
+        # after content is written to a newly created file is not dropped.
         if not event.is_directory:
-            self.process_file(Path(event.src_path))
+            self.process_file(Path(event.src_path), force=True)
 
     def on_created(self, event):
         # If a folder is dropped in, scan it recursively for files
@@ -66,16 +66,19 @@ class SortHandler(FileSystemEventHandler):
         self,
         file_path: Path,
         timeout_s: int = 30,
-        interval_s: float = 0.3,
+        interval_s: float = 0.5,
         stable_rounds: int = 2
     ) -> bool:
         """
-        Wait until file size stops changing (handles Windows file copy lag).
-        FIX: allow size==0 (empty files are valid), faster poll, fewer rounds.
-        FIX: if size is already stable on the first read, return immediately.
+        Wait until file size stops changing for `stable_rounds` consecutive polls.
+
+        FIX: Removed the size > 0 guard. A file created in Explorer starts at
+        0 bytes then gets written to. The old guard meant stable_count was never
+        incremented for a 0-byte file, so it always timed out and skipped.
+        Any size (including 0) that stays the same for stable_rounds polls = stable.
         """
         start = time.time()
-        last_size = -1
+        last_size = -1  # -1 sentinel means "not yet read"
         stable_count = 0
 
         while time.time() - start < timeout_s:
@@ -99,17 +102,23 @@ class SortHandler(FileSystemEventHandler):
 
         return False
 
-    def process_file(self, file_path):
+    def process_file(self, file_path, force: bool = False):
+        """
+        force=True: skip the debounce (used by on_modified so a file that was
+        skipped as unstable gets re-evaluated when content arrives).
+        The _processing in-flight guard still applies regardless.
+        """
         if not file_path.exists() or not file_path.is_file(): return
-        if file_path.name.startswith('.'): return 
+        if file_path.name.startswith('.'): return
 
         file_key = str(file_path)
         now = time.time()
         if file_key in self._processing:
             return
-        prev_at = self._recently_processed_at.get(file_key)
-        if prev_at is not None and now - prev_at < 4:  # FIX: was 15s — too long for rapid imports
-            return
+        if not force:
+            prev_at = self._recently_processed_at.get(file_key)
+            if prev_at is not None and now - prev_at < 3:
+                return
 
         self._processing.add(file_key)
         filename = file_path.name
@@ -124,10 +133,8 @@ class SortHandler(FileSystemEventHandler):
             image_exts = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
             archive_exts = {'.zip', '.rar', '.7z', '.tar', '.gz'}
 
-            # FIX: Only wait for stability for file types we will actually move.
-            # The old catch-all clause triggered a 120s wait for almost every file.
-            will_move = ext == '.srt' or ext in video_exts or ext in image_exts
-            if will_move:
+            # Only wait for stability when we intend to move the file.
+            if ext == '.srt' or ext in video_exts or ext in image_exts or (ext and ext not in archive_exts):
                 stable = self.wait_until_file_stable(file_path)
                 if not stable:
                     print(f"[sorter] Skip (file not stable): {filename}", flush=True)
@@ -152,11 +159,15 @@ class SortHandler(FileSystemEventHandler):
 
                 # 3. Fuzzy Match for Project Folder
                 project_path = self.find_fuzzy_match(clean_title, DEST_BASE / "Projects")
+
+                # FIX: No matching folder = leave in intake for review.
+                # Do NOT auto-create a new project folder from the filename.
                 if not project_path:
-                    # FIX: No matching project folder found — leave the file in intake
-                    # so it appears in the inbox for manual review, rather than
-                    # silently creating a new project folder from the filename.
-                    print(f"[sorter] No project match for {filename!r} (title={clean_title!r}) — keeping in intake", flush=True)
+                    print(
+                        f"[sorter] No project folder matched '{clean_title}' "
+                        f"— leaving {filename} in intake for review.",
+                        flush=True
+                    )
                     return
 
                 # 4. Build Final Path
@@ -184,49 +195,47 @@ class SortHandler(FileSystemEventHandler):
             self._processing.discard(file_key)
             self._recently_processed_at[file_key] = time.time()
 
-    def find_fuzzy_match(self, new_name, parent_folder):
+    def find_fuzzy_match(self, new_name, parent_folder, _depth=0, _max_depth=4):
         """
-        Matches a filename to an existing project folder.
-        Strategy (in priority order):
-          1. Exact match (case-insensitive, ignoring spaces/underscores)
-          2. Folder name is contained within the filename
-          3. Every word of the folder name appears in the filename (word-set match)
-        Folders are checked longest-first so the most specific match wins.
+        Recursively search all subdirectories under parent_folder for a folder
+        whose name fuzzy-matches new_name.
+
+        FIX: The original used iterdir() — one level deep only. This broke when
+        the user created a client folder first (e.g. Projects/CreatiVoices/) and
+        then a show folder inside it (Projects/CreatiVoices/One Piece/). The
+        sorter only saw "CreatiVoices" at the top level and found no match.
+
+        Now we recurse into each subfolder before moving to the next sibling,
+        so deeply nested project folders are found correctly. Longest name wins
+        within the same depth to handle "Sentenced" vs "Sentenced to be a Hero".
+
+        max_depth=4 prevents runaway recursion on unusual folder structures.
         """
-        if not parent_folder.exists():
+        if not parent_folder.exists() or _depth > _max_depth:
             return None
 
-        def normalise(s):
-            return s.lower().replace(" ", "").replace("_", "").replace("-", "")
+        new_name_clean = new_name.lower().replace(" ", "").replace("_", "")
 
-        new_clean = normalise(new_name)
-        new_words = set(re.split(r'[\s_\-]+', new_name.lower()))
+        try:
+            subdirs = [d for d in parent_folder.iterdir() if d.is_dir()]
+        except PermissionError:
+            return None
 
-        existing_dirs = [d for d in parent_folder.iterdir() if d.is_dir()]
-        existing_dirs.sort(key=lambda x: len(x.name), reverse=True)
+        # Longest folder name first — more specific matches beat shorter ones
+        subdirs.sort(key=lambda x: len(x.name), reverse=True)
 
-        for existing in existing_dirs:
-            folder_clean = normalise(existing.name)
-            if not folder_clean:
-                continue
+        for subdir in subdirs:
+            existing_clean = subdir.name.lower().replace(" ", "").replace("_", "")
 
-            # 1. Exact normalised match
-            if folder_clean == new_clean:
-                print(f"[sorter] Matched (exact): {existing.name!r} <- {new_name!r}", flush=True)
-                return existing
+            # Check this folder itself first
+            if existing_clean and existing_clean in new_name_clean:
+                return subdir
 
-            # 2. Folder name substring of filename
-            if folder_clean in new_clean:
-                print(f"[sorter] Matched (substring): {existing.name!r} <- {new_name!r}", flush=True)
-                return existing
+            # Then recurse into it before trying the next sibling
+            nested = self.find_fuzzy_match(new_name, subdir, _depth + 1, _max_depth)
+            if nested:
+                return nested
 
-            # 3. Every word in the folder name appears in the filename
-            folder_words = set(re.split(r'[\s_\-]+', existing.name.lower()))
-            if folder_words and folder_words <= new_words:
-                print(f"[sorter] Matched (word-set): {existing.name!r} <- {new_name!r}", flush=True)
-                return existing
-
-        print(f"[sorter] No match for: {new_name!r} in {parent_folder}", flush=True)
         return None
 
     def move_file(self, src, dest_folder):
