@@ -1868,3 +1868,81 @@ input:checked + .slider:before {
   flex: 1;
   min-width: 0;
 }
+
+
+/* ── Client Summary grid ────────────────────────────────────────────── */
+.projects-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.client-summary-card {
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-lg);
+  padding: 1rem 1.25rem;
+  background: var(--color-background-primary);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.client-summary-card:hover {
+  border-color: var(--color-border-primary);
+}
+
+.client-summary-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  margin-bottom: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.client-summary-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.client-stat {
+  background: var(--color-background-secondary);
+  border-radius: var(--border-radius-md);
+  padding: 6px 8px;
+}
+
+.client-stat-num {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  line-height: 1.2;
+}
+
+.client-stat-label {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+}
+
+.client-summary-projects {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.client-summary-date {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 6px;
+}
+
+.projects-summary-empty {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  padding: 1rem 0;
+}
