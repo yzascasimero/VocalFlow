@@ -28,6 +28,7 @@ const {
   updateAssetProjectByPath,
   getDashboardStats,
   listAssets,
+  listIntakeAssets,
   listProjects
 } = require("./database");
 
@@ -387,6 +388,10 @@ async function walkDirectory(dir) {
   async function walk(current) {
     const entries = await fsp.readdir(current, { withFileTypes: true });
     for (const entry of entries) {
+      // Skip hidden folders (e.g. .dart_tool, .cxx, .cmake, .git)
+      // These are build/tool artifacts that should never be treated as assets.
+      if (entry.name.startsWith(".")) continue;
+
       const fullPath = path.join(current, entry.name);
       if (entry.isDirectory()) {
         await walk(fullPath);
@@ -526,8 +531,83 @@ ipcMain.handle("assets:list", async () => {
   return listAssets();
 });
 
+// Inbox-specific: only assets currently inside VocalFlow_Intake.
+// Files that have been sorted into Projects/ are excluded — they are
+// not "pending review", they have already been handled.
+ipcMain.handle("assets:list-intake", async () => {
+  return listIntakeAssets(INTAKE_DIR);
+});
+
 ipcMain.handle("projects:list", async () => {
   return listProjects();
+});
+
+// Projects folder summary — reads the Projects/ directory on disk and returns
+// each top-level client folder with its subfolder count, total file count,
+// total size, and last modified date. Fully filesystem-driven so it always
+// reflects reality regardless of what the DB says.
+ipcMain.handle("projects:folder-summary", async () => {
+  try {
+    const exists = await safeStat(PROJECTS_DIR);
+    if (!exists) return [];
+
+    const clientEntries = await fsp.readdir(PROJECTS_DIR, { withFileTypes: true });
+    const clients = clientEntries.filter(e => e.isDirectory());
+
+    const summary = await Promise.all(clients.map(async (client) => {
+      const clientPath = path.join(PROJECTS_DIR, client.name);
+
+      // Walk the client folder recursively to count files + size
+      let fileCount = 0;
+      let totalBytes = 0;
+      let lastModifiedMs = 0;
+      const subfolders = new Set();
+
+      async function scanDir(dir, depth) {
+        let entries;
+        try { entries = await fsp.readdir(dir, { withFileTypes: true }); }
+        catch { return; }
+
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            // Track direct subfolders of the client (project names)
+            if (depth === 0) subfolders.add(entry.name);
+            await scanDir(fullPath, depth + 1);
+          } else {
+            fileCount++;
+            try {
+              const st = await fsp.stat(fullPath);
+              totalBytes += st.size;
+              if (st.mtimeMs > lastModifiedMs) lastModifiedMs = st.mtimeMs;
+            } catch { /* skip inaccessible files */ }
+          }
+        }
+      }
+
+      await scanDir(clientPath, 0);
+
+      return {
+        name: client.name,
+        relativePath: path.relative(APP_ROOT, clientPath),
+        projectCount: subfolders.size,
+        projects: Array.from(subfolders).sort(),
+        fileCount,
+        totalBytes,
+        lastModified: lastModifiedMs ? new Date(lastModifiedMs).toISOString() : null
+      };
+    }));
+
+    // Sort by last modified descending — most recently active client first
+    return summary.sort((a, b) => {
+      if (!a.lastModified) return 1;
+      if (!b.lastModified) return -1;
+      return new Date(b.lastModified) - new Date(a.lastModified);
+    });
+  } catch (err) {
+    console.error("projects:folder-summary error:", err);
+    return [];
+  }
 });
 
 ipcMain.handle("intake:rescan", async () => {
@@ -1065,6 +1145,11 @@ ipcMain.handle("intake:list-folders", async () => {
           const fullPath = path.join(INTAKE_DIR, entry.name);
           const stat = await safeStat(fullPath);
 
+          // FIX: Count files inside the folder — skip empty folders so that
+          // clearing intake via File Explorer leaves no ghost entries in inbox.
+          const contents = await fsp.readdir(fullPath).catch(() => []);
+          if (contents.length === 0) return null;
+
           return {
             name: entry.name,
             relative_path: path.relative(APP_ROOT, fullPath),
@@ -1077,7 +1162,8 @@ ipcMain.handle("intake:list-folders", async () => {
         })
     );
 
-    return folders;
+    // Filter out nulls (empty folders)
+    return folders.filter(Boolean);
   } catch (error) {
     console.error("intake:list-folders error:", error);
     return [];

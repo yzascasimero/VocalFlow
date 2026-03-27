@@ -365,6 +365,37 @@ async function listAssets() {
   `);
 }
 
+// Intake-only asset list — only files physically inside VocalFlow_Intake.
+// The intakeDir path is passed in so database.js stays path-agnostic.
+async function listIntakeAssets(intakeDir) {
+  const intakePath = intakeDir.replace(/\\/g, "/");
+  return all(`
+    SELECT
+      a.id,
+      a.file_name,
+      a.file_path,
+      a.relative_path,
+      a.extension,
+      a.size_bytes,
+      a.episode_number,
+      a.asset_type,
+      a.file_hash,
+      a.drive_id,
+      a.is_missing,
+      a.is_deleted,
+      a.updated_at,
+      p.project_code,
+      p.project_name
+    FROM assets a
+    LEFT JOIN projects p ON a.project_id = p.id
+    WHERE a.is_missing = 0
+      AND a.is_deleted = 0
+      AND REPLACE(a.file_path, '\\', '/') LIKE (? || '%')
+    ORDER BY a.updated_at DESC
+    LIMIT 500
+  `, [intakePath]);
+}
+
 async function listProjects() {
   return all(`
     SELECT
@@ -405,5 +436,6 @@ module.exports = {
   updateAssetProjectByPath,
   getDashboardStats,
   listAssets,
+  listIntakeAssets,
   listProjects
 };

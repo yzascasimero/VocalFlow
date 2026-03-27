@@ -18,6 +18,7 @@ const eventLog = document.getElementById("eventLog");
 const analyticsFeed = document.getElementById("analyticsFeed");
 const actionList = document.getElementById("actionList");
 const projectsFolderGrid = document.getElementById("projectsFolderGrid");
+const projectsSummaryGrid = document.getElementById("projectsSummaryGrid");
 const projectBreadcrumbs = document.getElementById("projectBreadcrumbs");
 const rescanBtn = document.getElementById("rescanBtn");
 const addFolderBtn = document.getElementById("addFolderBtn");
@@ -607,29 +608,59 @@ async function navigateBack() {
   updateBackButton();
 }
 
-function renderProjects(projects) {
-  if (!projectsTableBody) return;
+function renderProjectsSummary(clients) {
+  if (!projectsSummaryGrid) return;
 
-  if (!projects.length) {
-    projectsTableBody.innerHTML = `
-      <tr>
-        <td colspan="5" class="empty-table">No projects detected yet.</td>
-      </tr>
-    `;
-  } else {
-    projectsTableBody.innerHTML = projects.map((project) => `
-      <tr>
-        <td>${escapeHtml(project.project_code)}</td>
-        <td>${escapeHtml(project.project_name || "-")}</td>
-        <td>${escapeHtml(project.status)}</td>
-        <td>${escapeHtml(project.asset_count)}</td>
-        <td>${formatDate(project.updated_at)}</td>
-      </tr>
-    `).join("");
+  if (!clients.length) {
+    projectsSummaryGrid.innerHTML =
+      `<div class="projects-summary-empty">No client folders found in Projects yet. Create one with "+ Add Folder".</div>`;
+    return;
   }
 
-  loadProjectDirectory(currentProjectPath).catch((error) => {
-    console.error("Directory load error:", error);
+  projectsSummaryGrid.innerHTML = clients.map(client => {
+    const projectsList = client.projects.length
+      ? client.projects.join(", ")
+      : "No subfolders yet";
+    const sizeLabel = formatBytes(client.totalBytes);
+    const dateLabel = client.lastModified ? formatDate(client.lastModified) : "—";
+
+    return `
+      <div class="client-summary-card" data-path="${escapeHtml(client.relativePath)}">
+        <div class="client-summary-name" title="${escapeHtml(client.name)}">${escapeHtml(client.name)}</div>
+        <div class="client-summary-stats">
+          <div class="client-stat">
+            <div class="client-stat-num">${client.fileCount}</div>
+            <div class="client-stat-label">files</div>
+          </div>
+          <div class="client-stat">
+            <div class="client-stat-num">${client.projectCount}</div>
+            <div class="client-stat-label">projects</div>
+          </div>
+          <div class="client-stat">
+            <div class="client-stat-num">${sizeLabel}</div>
+            <div class="client-stat-label">total size</div>
+          </div>
+          <div class="client-stat">
+            <div class="client-stat-num">${dateLabel}</div>
+            <div class="client-stat-label">last activity</div>
+          </div>
+        </div>
+        <div class="client-summary-projects" title="${escapeHtml(projectsList)}">
+          ${escapeHtml(projectsList)}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  // Clicking a client card navigates into that folder
+  projectsSummaryGrid.querySelectorAll(".client-summary-card").forEach(card => {
+    card.addEventListener("click", () => {
+      loadProjectDirectory(card.dataset.path);
+    });
+  });
+
+  loadProjectDirectory(currentProjectPath).catch(err => {
+    console.error("Directory load error:", err);
   });
 }
 
@@ -687,9 +718,12 @@ async function loadData() {
   if (!window.vocalflowAPI?.listAssets || !window.vocalflowAPI?.listProjects) return;
 
   try {
-    console.log("Calling listAssets");
-    cachedAssets = await window.vocalflowAPI.listAssets();
-    console.log("Assets received:", cachedAssets?.length);
+    console.log("Calling listIntakeAssets");
+    // FIX: Only load assets physically in VocalFlow_Intake for the inbox.
+    // Files sorted into Projects/ are not pending review — exclude them.
+    cachedAssets = await window.vocalflowAPI.listIntakeAssets?.()
+      ?? await window.vocalflowAPI.listAssets();
+    console.log("Intake assets received:", cachedAssets?.length);
     console.log("Calling listProjects");
     cachedProjects = await window.vocalflowAPI.listProjects();
     console.log("Projects received:", cachedProjects?.length);
@@ -697,8 +731,11 @@ async function loadData() {
     cachedInboxFolders = await window.vocalflowAPI.listIntakeFolders();
     console.log("Folders received:", cachedInboxFolders?.length);
 
+    // Load folder-based client summary
+    const clientSummary = await window.vocalflowAPI.getProjectsFolderSummary?.() || [];
+
     applyInboxFilters();
-    renderProjects(cachedProjects);
+    renderProjectsSummary(clientSummary);
     renderActionList(cachedAssets);
     updateInboxBadge();
   } catch (error) {
@@ -1082,7 +1119,8 @@ function bindSearch() {
               .some((v) => String(v).toLowerCase().includes(q))
           );
 
-      renderProjects(filtered);
+      // Project search filters the folder grid — summary always shows all clients
+      loadProjectDirectory(currentProjectPath);
     });
   }
 }
