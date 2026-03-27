@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("vocalflowAPI", {
   // Dashboard
   getPaths: () => ipcRenderer.invoke("app:get-paths"),
   getDashboardStats: () => ipcRenderer.invoke("dashboard:get-stats"),
+  getAnalyticsOverview: () => ipcRenderer.invoke("analytics:get-overview"),
   listAssets: () => ipcRenderer.invoke("assets:list"),
   listIntakeAssets: () => ipcRenderer.invoke("assets:list-intake"),
   listProjects: () => ipcRenderer.invoke("projects:list"),

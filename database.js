@@ -412,6 +412,48 @@ async function listProjects() {
   `);
 }
 
+async function getAnalyticsOverview() {
+  const overview = await get(`
+    SELECT
+      COUNT(*) AS total_files_processed,
+      SUM(CASE WHEN project_id IS NOT NULL THEN 1 ELSE 0 END) AS assigned_count,
+      SUM(CASE WHEN is_deleted = 1 OR LOWER(REPLACE(file_path, '\\', '/')) LIKE '%/archive/%' THEN 1 ELSE 0 END) AS archived_count
+    FROM assets
+  `);
+
+  const daily_trend = await all(`
+    SELECT
+      date(updated_at) AS day,
+      COUNT(*) AS count
+    FROM assets
+    WHERE updated_at >= datetime('now', '-13 days')
+    GROUP BY date(updated_at)
+    ORDER BY day ASC
+  `);
+
+  const weekly_trend = await all(`
+    SELECT
+      strftime('%Y-W%W', updated_at) AS week,
+      COUNT(*) AS count
+    FROM assets
+    WHERE updated_at >= datetime('now', '-56 days')
+    GROUP BY strftime('%Y-W%W', updated_at)
+    ORDER BY week ASC
+  `);
+
+  const total = Number(overview?.total_files_processed || 0);
+  const assigned = Number(overview?.assigned_count || 0);
+  const assignment_rate = total ? Math.round((assigned / total) * 100) : 0;
+
+  return {
+    total_files_processed: total,
+    assignment_rate,
+    archived_count: Number(overview?.archived_count || 0),
+    daily_trend,
+    weekly_trend
+  };
+}
+
 // Export closeDatabase so the quit handler can close the connection cleanly.
 function closeDatabase() {
   return new Promise((resolve, reject) => {
@@ -435,6 +477,7 @@ module.exports = {
   resetDeletedByPath,
   updateAssetProjectByPath,
   getDashboardStats,
+  getAnalyticsOverview,
   listAssets,
   listIntakeAssets,
   listProjects

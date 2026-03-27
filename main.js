@@ -27,6 +27,7 @@ const {
   resetDeletedByPath,
   updateAssetProjectByPath,
   getDashboardStats,
+  getAnalyticsOverview,
   listAssets,
   listIntakeAssets,
   listProjects
@@ -453,12 +454,12 @@ async function waitForSortOutcome(intakePath, timeoutMs = 12000) {
 function buildActivityEntry(fileName, outcome) {
   if (outcome.recognized && outcome.finalPath) {
     const rel = path.relative(APP_ROOT, outcome.finalPath);
-    return { label: "sorted", message: `"${fileName}" sorted → ${rel}` };
+    return { label: "sorted", message: `"${fileName}" has been automatically moved to ${rel}` };
   }
   if (outcome.moved && !outcome.recognized) {
-    return { label: "sorted", message: `"${fileName}" moved but not matched to a project` };
+    return { label: "sorted", message: `"${fileName}" has been moved but not matched to a project folder` };
   }
-  return { label: "inbox", message: `"${fileName}" placed in inbox for review` };
+  return { label: "inbox", message: `"${fileName}" needs manual assignment in Inbox` };
 }
 
 function setupWatcher() {
@@ -525,6 +526,10 @@ ipcMain.handle("app:get-paths", async () => {
 
 ipcMain.handle("dashboard:get-stats", async () => {
   return getDashboardStats();
+});
+
+ipcMain.handle("analytics:get-overview", async () => {
+  return getAnalyticsOverview();
 });
 
 ipcMain.handle("assets:list", async () => {

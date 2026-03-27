@@ -25,11 +25,12 @@ const addFolderBtn = document.getElementById("addFolderBtn");
 const projectsBackBtn = document.getElementById("projectsBackBtn");
 
 const inboxSearch = document.getElementById("inboxSearch");
-const inboxSearchBtn = document.getElementById("inboxSearchBtn");
 const inboxFilterBtn = document.getElementById("inboxFilterBtn");
 const inboxFilterMenu = document.getElementById("inboxFilterMenu");
 const inboxFilterOptions = document.querySelectorAll(".filter-option");
+const inboxTabs = document.getElementById("inboxTabs");
 const projectsSearch = document.getElementById("projectsSearch");
+const archiveSearch = document.getElementById("archiveSearch");
 
 const viewArchiveBtn = document.getElementById("viewArchiveBtn");
 
@@ -37,8 +38,11 @@ let selectedArchiveItems = new Set();
 
 const archiveSelectionLabel = document.getElementById("archiveSelectionLabel");
 const archiveUnarchiveBtn = document.getElementById("archiveUnarchiveBtn");
+const archiveDeleteBtn = document.getElementById("archiveDeleteBtn");
+const archiveToggleSelectAllBtn = document.getElementById("archiveToggleSelectAllBtn");
 const archiveActionBar = document.querySelector(".archive-action-bar");
 const inboxSelectionLabel = document.getElementById("inboxSelectionLabel");
+const inboxToggleSelectAllBtn = document.getElementById("inboxToggleSelectAllBtn");
 const inboxOpenBtn = document.getElementById("inboxOpenBtn");
 const inboxRenameBtn = document.getElementById("inboxRenameBtn");
 const inboxMoveBtn = document.getElementById("inboxMoveBtn");
@@ -46,6 +50,11 @@ const inboxArchiveBtn = document.getElementById("inboxArchiveBtn");
 const inboxDeleteBtn = document.getElementById("inboxDeleteBtn");
 
 const inboxActionBar = document.querySelector(".inbox-action-bar");
+const assignFilesBtn = document.getElementById("assignFilesBtn");
+const viewDeletedBtn = document.getElementById("viewDeletedBtn");
+const deletedFilesModal = document.getElementById("deletedFilesModal");
+const deletedFilesModalCloseBtn = document.getElementById("deletedFilesModalCloseBtn");
+const deletedFilesModalDoneBtn = document.getElementById("deletedFilesModalDoneBtn");
 
 const inboxBadge = document.getElementById("inboxBadge");
 
@@ -109,7 +118,8 @@ let calendarDate = new Date();
 let selectedDate = new Date();
 let currentProjectPath = "Projects";
 let projectPathHistory = [];   // stack of paths for back-button navigation
-let currentInboxFilter = "active";
+let currentInboxFilter = "all";
+let archiveQuery = "";
 
 let selectedInboxItems = new Set();
 let cachedInboxFolders = [];
@@ -119,6 +129,11 @@ let todoStore = loadTodos();
 
 let cachedAssets = [];
 let cachedProjects = [];
+const analyticsTotalFiles = document.getElementById("analyticsTotalFiles");
+const analyticsAssignmentRate = document.getElementById("analyticsAssignmentRate");
+const analyticsArchivedCount = document.getElementById("analyticsArchivedCount");
+const dailyTrendChart = document.getElementById("dailyTrendChart");
+const weeklyTrendChart = document.getElementById("weeklyTrendChart");
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -134,6 +149,13 @@ function formatDate(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return escapeHtml(value);
   return date.toLocaleDateString();
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return escapeHtml(value);
+  return date.toLocaleString();
 }
 
 function formatDateKey(date) {
@@ -206,6 +228,9 @@ function updateArchiveActionState() {
   }
   if (archiveUnarchiveBtn) {
     archiveUnarchiveBtn.disabled = !hasSelection;
+  }
+  if (archiveDeleteBtn) {
+    archiveDeleteBtn.disabled = !hasSelection;
   }
 }
 
@@ -305,7 +330,9 @@ function addRecentActivity(label, message) {
 function renderActionList(assets) {
   if (!actionList) return;
 
-  const urgentAssets = assets.slice(0, 5);
+  const urgentAssets = (assets || [])
+    .filter((item) => getInboxStatus(item).label === "Unassigned")
+    .slice(0, 8);
   if (!urgentAssets.length) {
     actionList.innerHTML = `<div class="empty-mini">No files currently need review.</div>`;
     return;
@@ -313,10 +340,11 @@ function renderActionList(assets) {
 
   actionList.innerHTML = urgentAssets.map((asset) => {
     const status = getInboxStatus(asset);
+    const displayName = asset.is_directory ? asset.name : asset.file_name;
     return `
     <div class="action-row">
       <div class="action-main">
-        <strong>${escapeHtml(asset.file_name)}</strong>
+        <strong>${escapeHtml(displayName)}</strong>
         <span>${escapeHtml(asset.project_code || "Unassigned Project")}</span>
       </div>
       <div class="action-tags">
@@ -354,7 +382,7 @@ function getInboxStatus(item) {
     return { label: "Assigned", className: "info" };
   }
 
-  return { label: "Unassigned", className: "success" };
+  return { label: "Unassigned", className: "danger" };
 }
 
 function renderInboxTables(files, folders) {
@@ -421,8 +449,8 @@ function renderInboxTables(files, folders) {
   };
 
   // Determine visibility based on filter
-  const showActive = currentInboxFilter === "all" || currentInboxFilter === "active" || currentInboxFilter === "files" || currentInboxFilter === "folders" || currentInboxFilter === "missing";
-  const showAssigned = currentInboxFilter === "all" || currentInboxFilter === "assigned";
+  const showActive = true;
+  const showAssigned = currentInboxFilter === "all";
 
   // Get parent panels for active and assigned tables
   const activePanelParent = inboxItemsTableBody.closest(".inbox-panel");
@@ -455,12 +483,20 @@ function renderInboxTables(files, folders) {
 
   const archived = (cachedAssets || []).filter((asset) => {
     const status = getInboxStatus(asset);
-    return status.className === "archived";
+    if (status.className !== "archived") return false;
+    if (!archiveQuery) return true;
+    return [asset.file_name, asset.relative_path]
+      .filter(Boolean)
+      .some((v) => String(v).toLowerCase().includes(archiveQuery));
   });
 
   const deleted = (cachedAssets || []).filter((asset) => {
     const status = getInboxStatus(asset);
-    return status.className === "danger" && status.label === "Deleted";
+    if (!(status.className === "danger" && status.label === "Deleted")) return false;
+    if (!archiveQuery) return true;
+    return [asset.file_name, asset.relative_path]
+      .filter(Boolean)
+      .some((v) => String(v).toLowerCase().includes(archiveQuery));
   });
 
   archivedTableBody.innerHTML = archived.length
@@ -476,7 +512,7 @@ function renderInboxTables(files, folders) {
           />
         </td>
         <td>${escapeHtml(asset.file_name)}</td>
-        <td>${formatDate(asset.updated_at)}</td>
+        <td>${formatDateTime(asset.updated_at)}</td>
         <td><span class="status-chip ${status.className}">${status.label}</span></td>
       </tr>
     `;
@@ -491,27 +527,22 @@ function renderInboxTables(files, folders) {
     ? deleted.map((asset) => {
         const status = getInboxStatus(asset);
         return `
-      <tr class="${selectedArchiveItems.has(asset.relative_path) ? "selected-row" : ""}" data-path="${escapeHtml(asset.relative_path)}">
-        <td>
-          <input
-            class="archive-select"
-            type="checkbox"
-            ${selectedArchiveItems.has(asset.relative_path) ? "checked" : ""}
-          />
-        </td>
+      <tr>
         <td>${escapeHtml(asset.file_name)}</td>
-        <td>${formatDate(asset.updated_at)}</td>
+        <td>${formatDateTime(asset.updated_at)}</td>
         <td><span class="status-chip ${status.className}">${status.label}</span></td>
       </tr>
     `;
       }).join("")
     : `
       <tr>
-        <td colspan="4" class="empty-table">No deleted files.</td>
+        <td colspan="3" class="empty-table">No deleted files.</td>
       </tr>
     `;
 
   updateInboxActionState();
+
+  return { activeItems, assignedItems };
 }
 
 function renderBreadcrumbs(relativePath) {
@@ -521,7 +552,7 @@ function renderBreadcrumbs(relativePath) {
   const parts = cleaned ? cleaned.split("/") : [];
   let built = "";
 
-  const crumbs = [`<button class="crumb-btn" data-path="">Home</button>`];
+  const crumbs = [];
 
   for (const part of parts) {
     built = built ? `${built}/${part}` : part;
@@ -590,6 +621,13 @@ async function loadProjectDirectory(relativePath = "Projects", pushHistory = tru
   currentProjectPath = result.currentPath || "";
   renderBreadcrumbs(currentProjectPath);
   renderDirectoryItems(result.items);
+  if (importFilesBtn) {
+    importFilesBtn.style.display = currentProjectPath === "Projects" ? "none" : "inline-flex";
+  }
+  const summaryPanel = projectsSummaryGrid?.closest(".panel");
+  if (summaryPanel) {
+    summaryPanel.style.display = currentProjectPath === "Projects" ? "block" : "none";
+  }
   updateBackButton();
 }
 
@@ -736,7 +774,6 @@ async function loadData() {
 
     applyInboxFilters();
     renderProjectsSummary(clientSummary);
-    renderActionList(cachedAssets);
     updateInboxBadge();
   } catch (error) {
     console.error("loadData error:", error);
@@ -774,6 +811,7 @@ async function refreshAll() {
   await loadData();
   await loadStats();
   await loadPaths();
+  await loadAnalytics();
 }
 
 function handleInboxSelection(path, checked) {
@@ -1044,9 +1082,9 @@ function applyInboxFilters() {
     folders = [];
   } else if (currentInboxFilter === "folders") {
     files = [];
-  } else if (currentInboxFilter === "missing") {
-    folders = [];
-    files = files.filter((item) => item.is_missing && !item.is_deleted);
+  } else if (currentInboxFilter === "unassigned") {
+    files = files.filter((item) => !item.project_code);
+    folders = folders.filter((item) => !item.project_code);
   }
 
   const visiblePaths = new Set([
@@ -1058,8 +1096,10 @@ function applyInboxFilters() {
     [...selectedInboxItems].filter((path) => visiblePaths.has(path))
   );
 
-  // Pass all items to renderInboxTables - it will separate active/assigned and apply filter display
-  renderInboxTables(files, folders);
+  // Render inbox and drive Action Needed from the same filtered dataset
+  const result = renderInboxTables(files, folders);
+  const activeItems = result?.activeItems || [];
+  renderActionList(activeItems);
 }
 
 function toggleInboxFilterMenu() {
@@ -1084,7 +1124,8 @@ function bindSearch() {
     });
   }
 
-  inboxSearchBtn?.addEventListener("click", () => {
+  archiveSearch?.addEventListener("input", (e) => {
+    archiveQuery = String(e.target.value || "").toLowerCase().trim();
     applyInboxFilters();
   });
 
@@ -1098,6 +1139,15 @@ function bindSearch() {
       currentInboxFilter = option.dataset.filter || "all";
       applyInboxFilters();
       closeInboxFilterMenu();
+    });
+  });
+
+  inboxTabs?.querySelectorAll(".inbox-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      currentInboxFilter = tab.dataset.filter || "all";
+      inboxTabs.querySelectorAll(".inbox-tab").forEach((btn) => btn.classList.remove("active"));
+      tab.classList.add("active");
+      applyInboxFilters();
     });
   });
 
@@ -1155,6 +1205,43 @@ function renderTalents() {
   `).join("");
 }
 
+function drawSimpleBarChart(canvas, points, valueKey, labelKey) {
+  if (!canvas || !canvas.getContext) return;
+  const ctx = canvas.getContext("2d");
+  const width = canvas.clientWidth || 400;
+  const height = canvas.clientHeight || 220;
+  canvas.width = width;
+  canvas.height = height;
+  ctx.clearRect(0, 0, width, height);
+  if (!points.length) return;
+  const maxValue = Math.max(1, ...points.map((p) => Number(p[valueKey] || 0)));
+  const barWidth = Math.max(12, Math.floor((width - 24) / points.length) - 6);
+  const gap = 6;
+  points.forEach((p, idx) => {
+    const value = Number(p[valueKey] || 0);
+    const x = 12 + idx * (barWidth + gap);
+    const barHeight = Math.round((value / maxValue) * (height - 42));
+    const y = height - 24 - barHeight;
+    ctx.fillStyle = "#1f6feb";
+    ctx.fillRect(x, y, barWidth, barHeight);
+    if (idx % Math.ceil(points.length / 8) === 0) {
+      ctx.fillStyle = "#6b7280";
+      ctx.font = "10px Segoe UI";
+      ctx.fillText(String(p[labelKey] || ""), x, height - 8);
+    }
+  });
+}
+
+async function loadAnalytics() {
+  if (!window.vocalflowAPI?.getAnalyticsOverview) return;
+  const analytics = await window.vocalflowAPI.getAnalyticsOverview();
+  if (analyticsTotalFiles) analyticsTotalFiles.textContent = analytics.total_files_processed ?? 0;
+  if (analyticsAssignmentRate) analyticsAssignmentRate.textContent = `${analytics.assignment_rate ?? 0}%`;
+  if (analyticsArchivedCount) analyticsArchivedCount.textContent = analytics.archived_count ?? 0;
+  drawSimpleBarChart(dailyTrendChart, analytics.daily_trend || [], "count", "day");
+  drawSimpleBarChart(weeklyTrendChart, analytics.weekly_trend || [], "count", "week");
+}
+
 function openAddTalentModal() {
   talentNameInput.value = "";
   addTalentModal.classList.add("active");
@@ -1191,6 +1278,10 @@ async function moveSelectedInboxItems(targetRelativeFolder) {
   selectedInboxItems.clear();
 
   const movedCount = result.moved?.length || relativePaths.length;
+  (result.moved || []).forEach((move) => {
+    const fileName = move.oldRelativePath?.split("/").pop() || move.oldRelativePath;
+    addRecentActivity("sorted", `${fileName} has been assigned to ${move.newRelativePath}`);
+  });
 
   if (targetRelativeFolder === "Archive") {
     alert(`${movedCount} item(s) moved to Archive.`);
@@ -1321,6 +1412,24 @@ archiveUnarchiveBtn?.addEventListener("click", async () => {
   }
 });
 
+archiveDeleteBtn?.addEventListener("click", async () => {
+  if (selectedArchiveItems.size === 0) {
+    alert("Please select archived items to delete.");
+    return;
+  }
+  const itemsToDelete = Array.from(selectedArchiveItems);
+  const confirmed = confirm(`Delete ${itemsToDelete.length} archived item(s) permanently?`);
+  if (!confirmed) return;
+  const result = await window.vocalflowAPI.moveItems(itemsToDelete, "Archive/Deleted");
+  if (!result?.ok) {
+    alert(result?.error || "Delete failed.");
+    return;
+  }
+  selectedArchiveItems.clear();
+  updateArchiveActionState();
+  await refreshAll();
+});
+
 // Theme functions
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
@@ -1375,6 +1484,62 @@ navItems.forEach((item) => {
 
 viewArchiveBtn?.addEventListener("click", () => {
   switchSection("archive");
+});
+
+assignFilesBtn?.addEventListener("click", () => {
+  switchSection("inbox");
+  currentInboxFilter = "unassigned";
+  inboxTabs?.querySelectorAll(".inbox-tab").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.filter === "unassigned");
+  });
+  applyInboxFilters();
+});
+
+inboxToggleSelectAllBtn?.addEventListener("click", () => {
+  const visible = getAllInboxItems().filter((item) => {
+    const status = getInboxStatus(item);
+    if (status.className === "archived" || status.className === "danger") return false;
+    if (currentInboxFilter === "files" && item.is_directory) return false;
+    if (currentInboxFilter === "folders" && !item.is_directory) return false;
+    if (currentInboxFilter === "unassigned" && item.project_code) return false;
+    const query = (inboxSearch?.value || "").toLowerCase().trim();
+    if (!query) return true;
+    const values = item.is_directory
+      ? [item.name, item.relative_path, item.file_path]
+      : [item.file_name, item.relative_path, item.file_path, item.asset_type];
+    return values.filter(Boolean).some((v) => String(v).toLowerCase().includes(query));
+  });
+  const allSelected = visible.length > 0 && visible.every((item) => selectedInboxItems.has(item.relative_path));
+  if (allSelected) {
+    visible.forEach((item) => selectedInboxItems.delete(item.relative_path));
+  } else {
+    visible.forEach((item) => selectedInboxItems.add(item.relative_path));
+  }
+  inboxToggleSelectAllBtn.textContent = allSelected ? "Select All" : "Unselect All";
+  applyInboxFilters();
+});
+
+archiveToggleSelectAllBtn?.addEventListener("click", () => {
+  const archivedRows = Array.from(document.querySelectorAll("#archivedTableBody tr[data-path]"));
+  const paths = archivedRows.map((row) => row.dataset.path).filter(Boolean);
+  const allSelected = paths.length > 0 && paths.every((p) => selectedArchiveItems.has(p));
+  if (allSelected) {
+    paths.forEach((p) => selectedArchiveItems.delete(p));
+  } else {
+    paths.forEach((p) => selectedArchiveItems.add(p));
+  }
+  archiveToggleSelectAllBtn.textContent = allSelected ? "Select All" : "Unselect All";
+  updateArchiveActionState();
+  applyInboxFilters();
+});
+
+viewDeletedBtn?.addEventListener("click", () => {
+  deletedFilesModal?.classList.add("active");
+});
+deletedFilesModalCloseBtn?.addEventListener("click", () => deletedFilesModal?.classList.remove("active"));
+deletedFilesModalDoneBtn?.addEventListener("click", () => deletedFilesModal?.classList.remove("active"));
+deletedFilesModal?.addEventListener("click", (e) => {
+  if (e.target === deletedFilesModal) deletedFilesModal.classList.remove("active");
 });
 
 rescanBtn?.addEventListener("click", async () => {
@@ -1596,7 +1761,7 @@ inboxRenameBtn?.addEventListener("click", async () => {
   });
 });
 
-[archivedTableBody, deletedTableBody].forEach((tableBody) => {
+[archivedTableBody].forEach((tableBody) => {
   tableBody?.addEventListener("click", (e) => {
     const row = e.target.closest("tr[data-path]");
     if (!row) return;
@@ -1702,63 +1867,6 @@ addTalentCancelBtn?.addEventListener("click", closeAddTalentModal);
 
 addTalentModal?.addEventListener("click", (e) => {
   if (e.target === addTalentModal) closeAddTalentModal();
-});
-
-//breadcrumbs
-projectsFolderGrid?.addEventListener("click", async (e) => {
-  const card = e.target.closest(".folder-card");
-  if (!card) return;
-
-  const relativePath = card.dataset.path;
-  const isDirectory = card.dataset.dir === "1";
-  const action = e.target.dataset.action;
-
-  if (!action) {
-    if (isDirectory) {
-      await loadProjectDirectory(relativePath);
-    }
-    return;
-  }
-
-  if (action === "open") {
-    if (isDirectory) {
-      await loadProjectDirectory(relativePath);
-    } else {
-      await window.vocalflowAPI.openItemInExplorer(relativePath);
-    }
-    return;
-  }
-
-  if (action === "rename") {
-    const currentName = relativePath.split("/").pop();
-
-    openRenameModal(currentName, async (newName) => {
-      const result = await window.vocalflowAPI.renameItem(relativePath, newName);
-
-      if (!result.ok) {
-        showMessage(result.error || "Rename failed.");
-        return;
-      }
-
-      await loadProjectDirectory(currentProjectPath);
-    });
-    return;
-  }
-
-  if (action === "delete") {
-    const confirmed = confirm(`Delete "${relativePath}"?`);
-
-    if (!confirmed) return;
-
-    const result = await window.vocalflowAPI.deleteItem(relativePath);
-
-    if (!result.ok) {
-      showMessage(result.error || "Delete failed.");
-      return;
-    }
-
-    await loadProjectDirectory(currentProjectPath);
-  }
 });
 
 //create folder
@@ -1870,7 +1978,7 @@ window.vocalflowAPI?.onFilesystemChanged?.(async (payload) => {
   // For import events, outcomes are already logged by the button handler above.
   // For watcher-driven events (sorter moved a file autonomously), log them here.
   if (type === "file-added") {
-    addRecentActivity("sorted", `File added: ${payload.relativePath || ""}`);
+    addRecentActivity("sorted", `${payload.relativePath || "A file"} has been automatically moved and indexed.`);
   } else if (type === "file-removed") {
     addRecentActivity("removed", `File removed: ${payload.relativePath || ""}`);
   } else if (type === "file-changed") {
@@ -1880,7 +1988,7 @@ window.vocalflowAPI?.onFilesystemChanged?.(async (payload) => {
   } else if (type === "items-moved") {
     const moves = payload.moved || [];
     moves.forEach(m => {
-      addRecentActivity("sorted", `Moved: ${m.oldRelativePath} → ${m.newRelativePath}`);
+      addRecentActivity("sorted", `${m.oldRelativePath} has been automatically moved to ${m.newRelativePath}`);
     });
   } else if (type === "items-deleted" || type === "item-deleted") {
     const items = payload.deleted || (payload.relativePath ? [payload.relativePath] : []);

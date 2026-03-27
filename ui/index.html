@@ -123,6 +123,9 @@
                 <span class="muted-label">Recent file activity</span>
               </div>
               <div id="actionList" class="stack-list"></div>
+              <div class="panel-actions panel-footer-actions">
+                <button id="assignFilesBtn" class="btn btn-danger-soft btn-small" type="button">Assign Files</button>
+              </div>
             </article>
 
             <article class="panel">
@@ -196,12 +199,16 @@
   </header>
 
   <div class="toolbar inbox-toolbar">
+    <div class="inbox-tabs" id="inboxTabs">
+      <button class="inbox-tab active" data-filter="all" type="button">All Items</button>
+      <button class="inbox-tab" data-filter="files" type="button">Files</button>
+      <button class="inbox-tab" data-filter="folders" type="button">Folders</button>
+      <button class="inbox-tab" data-filter="unassigned" type="button">Unassigned</button>
+    </div>
     <div class="search-wrap">
       <span class="search-icon">⌕</span>
       <input id="inboxSearch" type="text" placeholder="Search files or folders..." />
     </div>
-
-    <button id="inboxSearchBtn" class="btn btn-primary" type="button">Search</button>
 
     <div class="filter-dropdown-wrap">
       <button id="inboxFilterBtn" class="icon-btn" type="button" title="Filter">⏷</button>
@@ -220,6 +227,7 @@
   <div class="inbox-action-bar" style="display: none;">
     <div class="inbox-action-left">
       <span id="inboxSelectionLabel" class="muted-label">No items selected</span>
+      <button id="inboxToggleSelectAllBtn" class="btn btn-secondary btn-small" type="button">Select All</button>
     </div>
 
     <div class="inbox-action-right">
@@ -235,7 +243,7 @@
     <article class="panel panel-table inbox-panel">
       <div class="panel-header">
         <h2>Inbox Items</h2>
-        <span class="muted-label">Files and folders ready for review</span>
+        <span class="muted-label">All incoming files and folders</span>
       </div>
 
       <table class="data-table inbox-table">
@@ -294,7 +302,6 @@
       <span class="search-icon">⌕</span>
       <input id="projectsSearch" type="text" placeholder="Search..." />
     </div>
-    <button class="icon-btn" title="Filter" type="button">⏷</button>
   </div>
 
   <div class="projects-nav-row">
@@ -392,9 +399,9 @@
           <div class="toolbar">
             <div class="search-wrap">
               <span class="search-icon">⌕</span>
-              <input type="text" placeholder="Search archive..." />
+              <input id="archiveSearch" type="text" placeholder="Search archive..." />
             </div>
-            <button class="icon-btn" title="Filter">⏷</button>
+            <button id="viewDeletedBtn" class="btn btn-secondary" type="button">View permanently deleted files</button>
           </div>
 
           <div class="archive-action-bar" style="display: none;">
@@ -403,7 +410,9 @@
             </div>
 
             <div class="archive-action-right">
+              <button id="archiveToggleSelectAllBtn" class="btn btn-secondary btn-small" type="button">Select All</button>
               <button id="archiveUnarchiveBtn" class="btn btn-secondary" type="button">Unarchive</button>
+              <button id="archiveDeleteBtn" class="btn btn-danger-soft" type="button">Delete</button>
             </div>
           </div>
 
@@ -425,24 +434,6 @@
                 <tbody id="archivedTableBody"></tbody>
               </table>
             </article>
-
-            <article class="panel panel-table deleted-panel">
-              <div class="panel-header">
-                <h2>Deleted Files</h2>
-                <span class="muted-label">Permanently deleted items</span>
-              </div>
-              <table class="data-table archive-table">
-                <thead>
-                  <tr>
-                    <th style="width: 52px;">Select</th>
-                    <th>Filename</th>
-                    <th>Date Received</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody id="deletedTableBody"></tbody>
-              </table>
-            </article>
           </div>
         </section>
 
@@ -451,9 +442,24 @@
           <header class="page-header">
             <div>
               <h1>Analytics</h1>
-              <p>Intake trends, file sync events, and project volume will appear here.</p>
+              <p>Dashboard metrics and trends from your live VocalFlow database.</p>
             </div>
           </header>
+
+          <div class="stats-grid analytics-stats-grid">
+            <article class="metric-card">
+              <h3>Total Files Processed</h3>
+              <div class="metric-value analytics-metric" id="analyticsTotalFiles">0</div>
+            </article>
+            <article class="metric-card">
+              <h3>Assignment Rate</h3>
+              <div class="metric-value analytics-metric" id="analyticsAssignmentRate">0%</div>
+            </article>
+            <article class="metric-card">
+              <h3>Archived Files</h3>
+              <div class="metric-value analytics-metric" id="analyticsArchivedCount">0</div>
+            </article>
+          </div>
 
           <div class="analytics-grid">
             <article class="panel">
@@ -465,7 +471,21 @@
 
             <article class="panel">
               <div class="panel-header">
-                <h2>Watcher Feed</h2>
+                <h2>Daily Trend (14 days)</h2>
+              </div>
+              <canvas id="dailyTrendChart" class="simple-chart"></canvas>
+            </article>
+          </div>
+          <div class="analytics-grid">
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Weekly Trend (8 weeks)</h2>
+              </div>
+              <canvas id="weeklyTrendChart" class="simple-chart"></canvas>
+            </article>
+            <article class="panel">
+              <div class="panel-header">
+                <h2>Activity Feed</h2>
               </div>
               <div id="analyticsFeed" class="event-log"></div>
             </article>
@@ -609,6 +629,32 @@
       <button id="addFolderModalSaveBtn" class="btn btn-primary">Create</button>
     </div>
 
+  </div>
+</div>
+
+<div id="deletedFilesModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2>Permanently Deleted Files</h2>
+      <button id="deletedFilesModalCloseBtn" class="modal-close" type="button">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="panel panel-table deleted-panel deleted-modal-table-wrap">
+        <table class="data-table archive-table">
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Date Received</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="deletedTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="deletedFilesModalDoneBtn" class="btn btn-primary" type="button">Done</button>
+    </div>
   </div>
 </div>
 
