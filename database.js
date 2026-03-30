@@ -417,7 +417,7 @@ async function getAnalyticsOverview() {
     SELECT
       COUNT(*) AS total_files_processed,
       SUM(CASE WHEN project_id IS NOT NULL THEN 1 ELSE 0 END) AS assigned_count,
-      SUM(CASE WHEN is_deleted = 1 OR LOWER(REPLACE(file_path, '\\', '/')) LIKE '%/archive/%' THEN 1 ELSE 0 END) AS archived_count
+      SUM(CASE WHEN is_deleted = 1 THEN 1 ELSE 0 END) AS archived_count
     FROM assets
   `);
 

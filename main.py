@@ -178,16 +178,15 @@ class SortHandler(FileSystemEventHandler):
 
                 self.move_file(file_path, final_dest)
 
-            # --- LOGIC: IMAGES ---
-            elif ext in image_exts:
-                # First segment (split by first dot)
-                first_sentence = stem.split('.')[0].strip()
-                self.move_file(file_path, DEST_BASE / "Images" / first_sentence)
-
-            # --- LOGIC: OTHERS ---
-            elif ext and ext not in archive_exts:
-                # medialink/Others/mp3 (removes the dot)
-                self.move_file(file_path, DEST_BASE / "Others" / ext.replace('.', ''))
+            # --- LOGIC: IMAGES & OTHERS ---
+            # Do NOT auto-move images or misc files into Images/ or Others/.
+            # Leave them in intake so the Inbox can show them for manual assignment.
+            elif ext in image_exts or (ext and ext not in archive_exts):
+                print(
+                    f"[sorter] No project matched for '{filename}' "
+                    f"— leaving in intake for Inbox review.",
+                    flush=True
+                )
 
         except Exception as e:
             print(f"[sorter] ERROR {filename}: {e}", flush=True)

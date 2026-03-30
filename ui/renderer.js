@@ -622,11 +622,12 @@ async function loadProjectDirectory(relativePath = "Projects", pushHistory = tru
   renderBreadcrumbs(currentProjectPath);
   renderDirectoryItems(result.items);
   if (importFilesBtn) {
-    importFilesBtn.style.display = currentProjectPath === "Projects" ? "none" : "inline-flex";
+    importFilesBtn.style.display = "inline-flex";
   }
+  const atRootLayer = !currentProjectPath || currentProjectPath === "Projects";
   const summaryPanel = projectsSummaryGrid?.closest(".panel");
   if (summaryPanel) {
-    summaryPanel.style.display = currentProjectPath === "Projects" ? "block" : "none";
+    summaryPanel.style.display = atRootLayer ? "block" : "none";
   }
   updateBackButton();
 }
@@ -726,26 +727,20 @@ async function loadStats() {
   if (!window.vocalflowAPI?.getDashboardStats) return;
 
   try {
-    console.log("Calling getDashboardStats");
-    const stats = await window.vocalflowAPI.getDashboardStats();
-    console.log("Stats received:", stats);
-    const totalAssets = document.getElementById("statTotalAssets");
+    const [stats, analytics] = await Promise.all([
+      window.vocalflowAPI.getDashboardStats(),
+      window.vocalflowAPI.getAnalyticsOverview?.() ?? {}
+    ]);
+
+    const totalAssets   = document.getElementById("statTotalAssets");
     const missingAssets = document.getElementById("statMissingAssets");
 
-    // Count active unassigned intakes from cached data
-    // FIX: Exclude missing/deleted rows from stat count.
-    const activeUnassignedCount = ((cachedAssets || []).filter((asset) => {
-      if (asset.is_missing || asset.is_deleted) return false;
-      const status = getInboxStatus(asset);
-      return status.className === "success" && !asset.project_code;
-    }).length) + ((cachedInboxFolders || []).filter((folder) => {
-      if (folder.is_missing || folder.is_deleted) return false;
-      const status = getInboxStatus(folder);
-      return status.className === "success" && !folder.project_code;
-    }).length);
+    const activeUnassignedCount =
+      (cachedAssets || []).filter(a => !a.is_missing && !a.is_deleted && !a.project_code).length +
+      (cachedInboxFolders || []).filter(f => !f.is_missing && !f.is_deleted && !f.project_code).length;
 
-    if (totalAssets) totalAssets.textContent = activeUnassignedCount;
-    if (missingAssets) missingAssets.textContent = stats.missing_assets ?? 0;
+    if (totalAssets)   totalAssets.textContent   = activeUnassignedCount;
+    if (missingAssets) missingAssets.textContent = analytics.archived_count ?? stats.deleted_assets ?? 0;
   } catch (error) {
     console.error("loadStats error:", error);
     throw error;
@@ -1158,19 +1153,58 @@ function bindSearch() {
   });
 
   if (projectsSearch) {
+    let _searchTimer = null;
     projectsSearch.addEventListener("input", (e) => {
+      clearTimeout(_searchTimer);
       const q = e.target.value.toLowerCase().trim();
 
-      const filtered = !q
-        ? cachedProjects
-        : cachedProjects.filter((project) =>
-            [project.project_code, project.project_name, project.status]
-              .filter(Boolean)
-              .some((v) => String(v).toLowerCase().includes(q))
-          );
+      if (!q) {
+        loadProjectDirectory(currentProjectPath);
+        return;
+      }
 
-      // Project search filters the folder grid — summary always shows all clients
-      loadProjectDirectory(currentProjectPath);
+      _searchTimer = setTimeout(async () => {
+        const matches = [];
+
+        async function walkSearch(relativePath) {
+          const res = await window.vocalflowAPI.listDirectory(relativePath);
+          if (!res?.ok) return;
+          for (const item of res.items) {
+            if (item.name.toLowerCase().includes(q)) {
+              matches.push(item);
+            }
+            if (item.isDirectory) {
+              await walkSearch(item.relativePath);
+            }
+          }
+        }
+
+        await walkSearch("Projects");
+
+        if (!projectsFolderGrid) return;
+
+        if (!matches.length) {
+          projectsFolderGrid.innerHTML = `<div class="empty-mini">No results for "${escapeHtml(q)}".</div>`;
+          return;
+        }
+
+        projectsFolderGrid.innerHTML = matches.map((item) => `
+          <div class="folder-card" data-path="${escapeHtml(item.relativePath)}" data-dir="${item.isDirectory ? "1" : "0"}">
+            <div class="folder-card-main">
+              <div class="folder-card-icon">${item.isDirectory ? "🗀" : "📄"}</div>
+              <div class="folder-card-meta">
+                <strong>${escapeHtml(item.name)}</strong>
+                <span style="font-size:11px;opacity:0.6">${escapeHtml(item.relativePath)}</span>
+              </div>
+            </div>
+            <div class="folder-card-actions">
+              <button class="mini-action" data-action="open" type="button">Open</button>
+              <button class="mini-action" data-action="rename" type="button">Rename</button>
+              <button class="mini-action" data-action="delete" type="button">Delete</button>
+            </div>
+          </div>
+        `).join("");
+      }, 300);
     });
   }
 }

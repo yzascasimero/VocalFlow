@@ -407,13 +407,11 @@ async function walkDirectory(dir) {
 }
 
 
-// ---------------------------------------------------------------------------
-// sortingOutcome: waits up to `timeoutMs` for the Python sorter to move a
-// file out of intake (i.e. its DB record's file_path changes or it disappears
-// from the intake dir).  Returns where the file ended up and whether it was
-// recognised/matched to a project folder.
-// ---------------------------------------------------------------------------
-async function waitForSortOutcome(intakePath, timeoutMs = 12000) {
+// waitForSortOutcome: waits up to `timeoutMs` for the Python sorter to move a
+// file out of intake. `scopeDir` constrains what counts as "recognized" —
+// the file must land somewhere inside scopeDir (e.g. the folder the user has
+// open) to be treated as auto-sorted. At the root layer pass PROJECTS_DIR.
+async function waitForSortOutcome(intakePath, timeoutMs = 12000, scopeDir = PROJECTS_DIR) {
   const start = Date.now();
   const pollMs = 400;
   const fileName = path.basename(intakePath);
@@ -439,7 +437,7 @@ async function waitForSortOutcome(intakePath, timeoutMs = 12000) {
       });
       if (row) {
         const newPath = row.file_path;
-        const inProjects = isPathInside(PROJECTS_DIR, newPath);
+        const inProjects = isPathInside(scopeDir, newPath);
         return { moved: true, finalPath: newPath, inProjects, recognized: inProjects };
       }
       return { moved: true, finalPath: null, inProjects: false, recognized: false };
@@ -872,13 +870,19 @@ ipcMain.handle("fs:open-items", async (_event, { items }) => {
   }
 });
 
-ipcMain.handle("fs:import-files", async () => {
+ipcMain.handle("fs:import-files", async (_event, { scopeRelativePath = "" } = {}) => {
   try {
     const result = await dialog.showOpenDialog({
       properties: ["openFile", "multiSelections"]
     });
 
     if (result.canceled) return { ok: false, canceled: true };
+
+    // Resolve the scope: the folder the user is currently browsing.
+    // At the root layer scopeRelativePath is "" (treats all of Projects as scope).
+    const scopeDir = scopeRelativePath
+      ? resolveManagedPath(scopeRelativePath)
+      : PROJECTS_DIR;
 
     const outcomes = [];
     const errors = [];
@@ -887,7 +891,6 @@ ipcMain.handle("fs:import-files", async () => {
       const fileName = path.basename(file);
       const intakeDest = path.join(INTAKE_DIR, fileName);
 
-      // Skip duplicates rather than aborting the whole batch.
       if (await safeStat(intakeDest)) {
         errors.push({ file: fileName, error: "Already exists in intake" });
         continue;
@@ -899,8 +902,8 @@ ipcMain.handle("fs:import-files", async () => {
       // 2. Register in DB immediately so the inbox can show it while sorting.
       await processSingleFile(intakeDest, "import_files");
 
-      // 3. Wait for the Python sorter to move it to its rightful folder.
-      const outcome = await waitForSortOutcome(intakeDest);
+      // 3. Wait for the Python sorter to move it — but only look within scopeDir.
+      const outcome = await waitForSortOutcome(intakeDest, 12000, scopeDir);
       const activity = buildActivityEntry(fileName, outcome);
 
       outcomes.push({
@@ -925,13 +928,17 @@ ipcMain.handle("fs:import-files", async () => {
   }
 });
 
-ipcMain.handle("fs:import-folder", async () => {
+ipcMain.handle("fs:import-folder", async (_event, { scopeRelativePath = "" } = {}) => {
   try {
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory"]
     });
 
     if (result.canceled) return { ok: false, canceled: true };
+
+    const scopeDir = scopeRelativePath
+      ? resolveManagedPath(scopeRelativePath)
+      : PROJECTS_DIR;
 
     const sourceFolder = result.filePaths[0];
     const folderName = path.basename(sourceFolder);
@@ -950,11 +957,11 @@ ipcMain.handle("fs:import-folder", async () => {
       await processSingleFile(filePath, "import_folder");
     }
 
-    // 3. Wait for each file's sort outcome.
+    // 3. Wait for each file's sort outcome — scoped to the current layer.
     const outcomes = [];
     for (const filePath of importedFiles) {
       const fileName = path.basename(filePath);
-      const outcome = await waitForSortOutcome(filePath);
+      const outcome = await waitForSortOutcome(filePath, 12000, scopeDir);
       const activity = buildActivityEntry(fileName, outcome);
       outcomes.push({
         fileName,

@@ -45,11 +45,11 @@ contextBridge.exposeInMainWorld("vocalflowAPI", {
   openItemsInExplorer: (items) =>
   ipcRenderer.invoke("fs:open-items", { items }),
 
-  importFiles: () =>
-    ipcRenderer.invoke("fs:import-files"),
+  importFiles: (scopeRelativePath = "") =>
+    ipcRenderer.invoke("fs:import-files", { scopeRelativePath }),
 
-  importFolder: () =>
-    ipcRenderer.invoke("fs:import-folder"),
+  importFolder: (scopeRelativePath = "") =>
+    ipcRenderer.invoke("fs:import-folder", { scopeRelativePath }),
 
   selectTargetFolder: () =>
     ipcRenderer.invoke("fs:select-target-folder"),
