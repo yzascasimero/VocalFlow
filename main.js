@@ -22,6 +22,8 @@ const {
   ensureDrive,
   upsertAsset,
   deleteAssetByPath,
+  getAssetByPath,
+  findActiveAssetByHash,
   markMissingByPath,
   markDeletedByPath,
   resetDeletedByPath,
@@ -30,7 +32,11 @@ const {
   getAnalyticsOverview,
   listAssets,
   listIntakeAssets,
-  listProjects
+  listProjects,
+  listDeletedAssets,
+  listAssignedNeedingReview,
+  confirmAssetReviewByPath,
+  confirmAllAssetReviews
 } = require("./database");
 
 let mainWindow = null;
@@ -50,6 +56,8 @@ const ARCHIVE_DIR = path.join(APP_ROOT, "Archive");
 const EXTRACTED_DIR = path.join(APP_ROOT, "Extracted");
 
 const WATCHED_DIRS = [INTAKE_DIR, PROJECTS_DIR, ARCHIVE_DIR, EXTRACTED_DIR];
+const DELETE_HISTORY_LOG_PATH = path.join(APP_ROOT, "delete_history.jsonl");
+const suppressTombstoneLogPaths = new Set();
 const SUPPORTED_ASSET_EXTENSIONS = new Set([
   ".wav", ".mp3", ".flac", ".aac", ".m4a",
   ".txt", ".doc", ".docx", ".pdf", ".csv",
@@ -148,7 +156,9 @@ async function ensureDirectories() {
     path.join(APP_ROOT, "Others"),
     ARCHIVE_DIR,
     path.join(ARCHIVE_DIR, "Deleted"),
-    EXTRACTED_DIR
+    EXTRACTED_DIR,
+    path.join(INTAKE_DIR, "Unassigned"),
+    path.join(INTAKE_DIR, "Assigned")
   ]) {
     await fsp.mkdir(dir, { recursive: true });
   }
@@ -187,6 +197,30 @@ async function computeFileHash(filePath) {
     stream.on("error", reject);
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+async function upsertFolderAsset(folderPath, intakeSource = "app") {
+  const stat = await safeStat(folderPath);
+
+  const driveRoot = getDriveRoot(folderPath);
+  const driveId = await ensureDrive(getDriveNameFromPath(folderPath), driveRoot);
+
+  await upsertAsset({
+    file_name: path.basename(folderPath),
+    file_path: folderPath,
+    relative_path: path.relative(APP_ROOT, folderPath),
+    extension: ".folder",
+    size_bytes: stat?.size ?? null,
+    mtime_ms: stat?.mtimeMs != null ? Math.floor(stat.mtimeMs) : null,
+    file_hash: null,
+    drive_id: driveId ?? null,
+    project_code: null,
+    project_name: null,
+    episode_number: null,
+    asset_type: "folder",
+    intake_source: intakeSource,
+    analytics_json: JSON.stringify({})
   });
 }
 
@@ -317,6 +351,15 @@ async function processSingleFile(filePath, intakeSource = "watcher") {
     const pathProjectCode = extractProjectCodeFromPath(filePath);
     const resolvedProjectCode = analytics.project_code || pathProjectCode || null;
     const resolvedProjectName = analytics.project_name || resolvedProjectCode || null;
+    const autoAssignedToProject =
+      !!resolvedProjectCode &&
+      isPathInside(PROJECTS_DIR, filePath) &&
+      String(intakeSource).startsWith("watcher");
+    const inAssignedIntake = isPathInside(path.join(INTAKE_DIR, "Assigned"), filePath);
+    const needsReviewFlag =
+      intakeSource === "confirm_assigned"
+        ? 0
+        : (inAssignedIntake || autoAssignedToProject ? 1 : null);
     const analyticsResolved = {
       ...analytics,
       project_code: resolvedProjectCode,
@@ -341,6 +384,7 @@ async function processSingleFile(filePath, intakeSource = "watcher") {
       episode_number: analytics.episode_number || null,
       asset_type: analytics.asset_type || path.extname(filePath).replace(".", ""),
       intake_source: intakeSource,
+      needs_review: needsReviewFlag,
       analytics_json: JSON.stringify(analyticsResolved)
     };
 
@@ -353,6 +397,20 @@ async function processSingleFile(filePath, intakeSource = "watcher") {
 
 async function handleUnlink(filePath) {
   try {
+    // If this unlink was triggered by an app-initiated permanent delete,
+    // skip tombstone logging (we already logged in the delete handler).
+    if (suppressTombstoneLogPaths.has(filePath)) {
+      suppressTombstoneLogPaths.delete(filePath);
+      await deleteAssetByPath(filePath);
+      notifyRenderer("db:updated", { filePath, missing: true });
+      return;
+    }
+
+    const row = await getAssetByPath(filePath);
+    const fileHash = row?.file_hash || null;
+    const relativePath = row?.relative_path || path.relative(APP_ROOT, filePath);
+    const fileName = row?.file_name || path.basename(filePath);
+
     // FIX: Hard-delete the row instead of marking is_missing=1.
     // When Python's sorter moves a file out of intake, Chokidar fires
     // unlink on the old path. Keeping is_missing=1 creates a ghost row
@@ -360,6 +418,22 @@ async function handleUnlink(filePath) {
     // (safeStat returns null for the already-moved file).
     await deleteAssetByPath(filePath);
     notifyRenderer("db:updated", { filePath, missing: true });
+
+    // Distinguish delete vs move:
+    // If the same file_hash reappears as an active asset soon after,
+    // treat this unlink as part of a move and don't create a tombstone entry.
+    if (fileHash) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const stillExistsElsewhere = await findActiveAssetByHash(fileHash, filePath);
+      if (stillExistsElsewhere) return;
+    }
+
+    await appendDeleteHistoryEntry({
+      file_name: fileName,
+      relative_path: relativePath,
+      deleted_at: new Date().toISOString(),
+      source: "explorer"
+    });
   } catch (err) {
     console.error("handleUnlink error:", err);
   }
@@ -460,6 +534,51 @@ function buildActivityEntry(fileName, outcome) {
   return { label: "inbox", message: `"${fileName}" needs manual assignment in Inbox` };
 }
 
+async function appendDeleteHistoryEntry(entry) {
+  const normalized = {
+    file_name: entry?.file_name || "",
+    relative_path: String(entry?.relative_path || "").replaceAll("\\", "/"),
+    deleted_at: entry?.deleted_at || new Date().toISOString(),
+    source: entry?.source || "unknown"
+  };
+
+  const line = JSON.stringify(normalized);
+  await fsp.appendFile(DELETE_HISTORY_LOG_PATH, line + "\n", "utf8");
+}
+
+async function readDeleteHistoryEntries(limit = 200) {
+  try {
+    const stat = await safeStat(DELETE_HISTORY_LOG_PATH);
+    if (!stat) return [];
+
+    const raw = await fsp.readFile(DELETE_HISTORY_LOG_PATH, "utf8");
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+
+    const entries = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      try {
+        entries.push(JSON.parse(lines[i]));
+      } catch {
+        // ignore malformed lines
+      }
+    }
+
+    entries.sort((a, b) => {
+      const ad = new Date(a.deleted_at || 0).getTime();
+      const bd = new Date(b.deleted_at || 0).getTime();
+      return bd - ad;
+    });
+
+    return entries.slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
+async function clearDeleteHistory() {
+  await fsp.rm(DELETE_HISTORY_LOG_PATH, { force: true });
+}
+
 function setupWatcher() {
   watcher = chokidar.watch(WATCHED_DIRS, {
     persistent: true,
@@ -534,6 +653,10 @@ ipcMain.handle("assets:list", async () => {
   return listAssets();
 });
 
+ipcMain.handle("assets:list-deleted", async () => {
+  return listDeletedAssets();
+});
+
 // Inbox-specific: only assets currently inside VocalFlow_Intake.
 // Files that have been sorted into Projects/ are excluded — they are
 // not "pending review", they have already been handled.
@@ -541,8 +664,89 @@ ipcMain.handle("assets:list-intake", async () => {
   return listIntakeAssets(INTAKE_DIR);
 });
 
+// Inbox "Assigned" confirmation:
+// Files under VocalFlow_Intake/Assigned are pending confirmation. When confirmed,
+// we physically move them into Projects/ preserving their subfolder structure.
+ipcMain.handle("inbox:confirm-assigned-items", async (_event, { items } = {}) => {
+  try {
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) return { ok: true, moved: [] };
+
+    const intakeRelName = path.basename(INTAKE_DIR); // "VocalFlow_Intake"
+
+    const moved = [];
+    for (const relPath of list) {
+      if (!relPath) continue;
+
+      const relPosix = String(relPath).replaceAll("\\", "/");
+      const relPosixLower = relPosix.toLowerCase();
+      if (!relPosixLower.includes(`${intakeRelName.toLowerCase()}/assigned/`)) {
+        // Not an intake-assigned path: just mark review complete.
+        const absPath = resolveManagedPath(relPosix);
+        await confirmAssetReviewByPath(absPath);
+        moved.push(relPath);
+        continue;
+      }
+
+      // Compute destination parent by swapping intake/Assigned -> Projects
+      // Example:
+      //   VocalFlow_Intake/Assigned/Client/Season 1/MP4/file.ext
+      //   -> Projects/Client/Season 1/MP4
+      const swapped = relPosix.replaceAll(`${intakeRelName}/Assigned/`, `Projects/`);
+      const destParentPosix = path.posix.dirname(swapped);
+
+      const sourceAbs = resolveManagedPath(relPosix);
+      const destParentAbs = resolveManagedPath(destParentPosix);
+      await fsp.mkdir(destParentAbs, { recursive: true });
+
+      const destAbs = path.join(destParentAbs, path.basename(sourceAbs));
+      if (await safeStat(destAbs)) {
+        return { ok: false, error: `Destination already exists: ${path.relative(APP_ROOT, destAbs)}` };
+      }
+
+      await fsp.rename(sourceAbs, destAbs);
+
+      // Re-index at destination and remove the intake DB row.
+      await processSingleFile(destAbs, "confirm_assigned");
+      await handleUnlink(sourceAbs);
+
+      moved.push(relPath);
+    }
+
+    return { ok: true, moved };
+  } catch (err) {
+    console.error("confirm assigned error:", err);
+    return { ok: false, error: err?.message || "Confirm failed." };
+  }
+});
+
 ipcMain.handle("projects:list", async () => {
   return listProjects();
+});
+
+ipcMain.handle("assets:list-assigned-review", async () => {
+  return listAssignedNeedingReview();
+});
+
+ipcMain.handle("assets:confirm-review", async (_event, { filePath }) => {
+  await confirmAssetReviewByPath(filePath);
+  return { ok: true };
+});
+
+ipcMain.handle("assets:confirm-review-all", async () => {
+  await confirmAllAssetReviews();
+  return { ok: true };
+});
+
+ipcMain.handle("deletions:get-history", async (_event, { limit } = {}) => {
+  const n = typeof limit === "number" ? limit : 200;
+  const entries = await readDeleteHistoryEntries(n);
+  return { ok: true, entries };
+});
+
+ipcMain.handle("deletions:clear-history", async () => {
+  await clearDeleteHistory();
+  return { ok: true };
 });
 
 // Projects folder summary — reads the Projects/ directory on disk and returns
@@ -756,7 +960,10 @@ ipcMain.handle("fs:rename-item", async (_event, { relativePath, newName }) => {
 ipcMain.handle("fs:move-item", async (_event, { sourceRelativePath, targetParentRelativePath }) => {
   try {
     const sourcePath = resolveManagedPath(sourceRelativePath);
-    const targetParentPath = resolveManagedPath(targetParentRelativePath || "");
+    const targetParentPath =
+      targetParentRelativePath === ""
+        ? INTAKE_DIR
+        : resolveManagedPath(targetParentRelativePath || "");
     const sourceStat = await safeStat(sourcePath);
     const targetParentStat = await safeStat(targetParentPath);
 
@@ -779,6 +986,11 @@ ipcMain.handle("fs:move-item", async (_event, { sourceRelativePath, targetParent
     await fsp.rename(sourcePath, targetPath);
 
     if (sourceStat.isDirectory()) {
+      // Maintain a DB row for the folder itself so Archive page selection
+      // works with folders too.
+      await markMissingByPath(sourcePath);
+      await upsertFolderAsset(targetPath, "move_item");
+
       const movedFiles = await walkDirectory(targetPath);
       for (const filePath of movedFiles) {
         await processSingleFile(filePath, "move_item");
@@ -814,15 +1026,31 @@ ipcMain.handle("fs:delete-item", async (_event, { relativePath }) => {
     const stat = await safeStat(targetPath);
 
     if (stat) {
-      // File/folder exists on disk — remove it and mark all children deleted.
-      const filePaths = stat.isDirectory() ? await walkDirectory(targetPath) : [targetPath];
+      // File/folder exists on disk — remove it and purge DB rows.
+      const filePaths = stat.isDirectory()
+        ? [targetPath, ...(await walkDirectory(targetPath))]
+        : [targetPath];
       await removePathRecursive(targetPath);
       for (const filePath of filePaths) {
-        await markDeletedByPath(filePath);
+        suppressTombstoneLogPaths.add(filePath);
+        await appendDeleteHistoryEntry({
+          file_name: path.basename(filePath),
+          relative_path: path.relative(APP_ROOT, filePath),
+          deleted_at: new Date().toISOString(),
+          source: "app"
+        });
+        await deleteAssetByPath(filePath);
       }
     } else {
       // FIX: File is already gone from disk (moved by the Python sorter).
       // Don't throw — just purge the ghost DB row so the inbox clears.
+      suppressTombstoneLogPaths.add(targetPath);
+      await appendDeleteHistoryEntry({
+        file_name: path.basename(targetPath),
+        relative_path: relativePath,
+        deleted_at: new Date().toISOString(),
+        source: "app"
+      });
       await deleteAssetByPath(targetPath);
     }
 
@@ -988,7 +1216,10 @@ ipcMain.handle("fs:import-folder", async (_event, { scopeRelativePath = "" } = {
 
 ipcMain.handle("fs:move-items", async (_event, { items, targetParentRelativePath }) => {
   try {
-    const targetParentPath = resolveManagedPath(targetParentRelativePath || "");
+    const targetParentPath =
+      targetParentRelativePath === ""
+        ? INTAKE_DIR
+        : resolveManagedPath(targetParentRelativePath || "");
     const targetParentStat = await safeStat(targetParentPath);
 
     if (!targetParentStat || !targetParentStat.isDirectory()) {
@@ -1015,6 +1246,10 @@ ipcMain.handle("fs:move-items", async (_event, { items, targetParentRelativePath
       await fsp.rename(sourcePath, targetPath);
 
       if (sourceStat.isDirectory()) {
+        // Keep a folder row in the DB so the Archive page can select/unarchive/delete folders.
+        await markMissingByPath(sourcePath);
+        await upsertFolderAsset(targetPath, "move_items");
+
         const movedFiles = await walkDirectory(targetPath);
         for (const filePath of movedFiles) {
           await processSingleFile(filePath, "move_items");
@@ -1045,6 +1280,7 @@ ipcMain.handle("fs:move-items", async (_event, { items, targetParentRelativePath
         const newPath = resolveManagedPath(move.newRelativePath);
         const stat = await safeStat(newPath);
         if (stat?.isDirectory()) {
+          await markDeletedByPath(newPath);
           const files = await walkDirectory(newPath);
           for (const file of files) {
             await markDeletedByPath(file);
@@ -1061,6 +1297,7 @@ ipcMain.handle("fs:move-items", async (_event, { items, targetParentRelativePath
         const newPath = resolveManagedPath(move.newRelativePath);
         const stat = await safeStat(newPath);
         if (stat?.isDirectory()) {
+          await resetDeletedByPath(newPath);
           const files = await walkDirectory(newPath);
           for (const file of files) {
             await resetDeletedByPath(file);
@@ -1103,14 +1340,30 @@ ipcMain.handle("fs:delete-items", async (_event, { items }) => {
       const stat = await safeStat(targetPath);
 
       if (stat) {
-        // File/folder is on disk — remove it and mark DB records deleted.
-        const filePaths = stat.isDirectory() ? await walkDirectory(targetPath) : [targetPath];
+        // File/folder is on disk — remove it and purge DB rows.
+        const filePaths = stat.isDirectory()
+          ? [targetPath, ...(await walkDirectory(targetPath))]
+          : [targetPath];
         await removePathRecursive(targetPath);
         for (const filePath of filePaths) {
-          await markDeletedByPath(filePath);
+          suppressTombstoneLogPaths.add(filePath);
+          await appendDeleteHistoryEntry({
+            file_name: path.basename(filePath),
+            relative_path: path.relative(APP_ROOT, filePath),
+            deleted_at: new Date().toISOString(),
+            source: "app"
+          });
+          await deleteAssetByPath(filePath);
         }
       } else {
         // FIX: Already gone from disk — just purge the ghost DB row.
+        suppressTombstoneLogPaths.add(targetPath);
+        await appendDeleteHistoryEntry({
+          file_name: path.basename(targetPath),
+          relative_path: relativePath,
+          deleted_at: new Date().toISOString(),
+          source: "app"
+        });
         await deleteAssetByPath(targetPath);
       }
 

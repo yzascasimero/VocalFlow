@@ -194,6 +194,9 @@
       <p>Review incoming files and folders, then move, archive, rename, or delete them.</p>
     </div>
     <div class="panel-actions">
+      <button id="autoAssignedReviewBtn" class="btn btn-primary" type="button" style="display:none;">
+        New files were assigned automatically. Please review to confirm.
+      </button>
       <button id="viewArchiveBtn" class="btn btn-secondary" type="button">View Archive</button>
     </div>
   </header>
@@ -239,6 +242,11 @@
     </div>
   </div>
 
+  <div id="reviewNotice" class="review-notice" style="display: none;">
+    <span id="reviewNoticeText">New files were assigned automatically. Please review to confirm.</span>
+    <button id="reviewNoticeBtn" class="btn btn-primary btn-small" type="button">Review Now</button>
+  </div>
+
   <div class="inbox-tables-container">
     <article class="panel panel-table inbox-panel">
       <div class="panel-header">
@@ -261,26 +269,6 @@
       </table>
     </article>
 
-    <article class="panel panel-table inbox-panel">
-      <div class="panel-header">
-        <h2>Assigned Items</h2>
-        <span class="muted-label">Files and folders assigned to projects</span>
-      </div>
-
-      <table class="data-table inbox-table">
-        <thead>
-          <tr>
-            <th style="width: 52px;"></th>
-            <th>Name</th>
-            <th>Type</th>
-            <th>Date Received</th>
-            <th>Status</th>
-            <th>Path</th>
-          </tr>
-        </thead>
-        <tbody id="assignedItemsTableBody"></tbody>
-      </table>
-    </article>
   </div>
 </section>
 
@@ -419,7 +407,7 @@
           <div class="archive-tables-container">
             <article class="panel panel-table archived-panel">
               <div class="panel-header">
-                <h2>Archived Files</h2>
+                <h2>Archived Items</h2>
                 <span class="muted-label">Moved to archive for later reference</span>
               </div>
               <table class="data-table archive-table">
@@ -653,7 +641,64 @@
       </div>
     </div>
     <div class="modal-footer">
+      <button id="deleteHistoryBtn" class="btn btn-secondary" type="button">Delete history</button>
       <button id="deletedFilesModalDoneBtn" class="btn btn-primary" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
+<div id="assignedReviewModal" class="modal-overlay">
+  <div class="modal-card review-modal-card">
+    <div class="modal-header">
+      <h2>Auto-assigned Files To Review</h2>
+      <button id="assignedReviewCloseBtn" class="modal-close" type="button">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="panel panel-table deleted-modal-table-wrap">
+        <table class="data-table inbox-table">
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Assigned Project</th>
+              <th>Date Assigned</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="assignedReviewTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="assignedReviewConfirmAllBtn" class="btn btn-primary" type="button">Confirm All</button>
+      <button id="assignedReviewDoneBtn" class="btn" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
+<div id="autoAssignedModal" class="modal-overlay">
+  <div class="modal-card review-modal-card">
+    <div class="modal-header">
+      <h2>Auto-assigned Files to Review</h2>
+      <button id="autoAssignedModalCloseBtn" class="modal-close" type="button">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="panel panel-table deleted-panel deleted-modal-table-wrap">
+        <table class="data-table archive-table">
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Assigned Project</th>
+              <th>Path</th>
+              <th style="width: 180px;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="autoAssignedTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="autoAssignedConfirmAllBtn" class="btn btn-primary" type="button">Confirm All</button>
+      <button id="autoAssignedModalDoneBtn" class="btn btn-secondary" type="button">Done</button>
     </div>
   </div>
 </div>

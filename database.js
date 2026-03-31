@@ -74,6 +74,7 @@ async function initDatabase() {
       is_missing INTEGER DEFAULT 0,
       is_deleted INTEGER DEFAULT 0,
       intake_source TEXT,
+      needs_review INTEGER DEFAULT 0,
       analytics_json TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -86,6 +87,9 @@ async function initDatabase() {
   const existingCols = await all(`PRAGMA table_info(assets)`);
   if (!existingCols.some((col) => col.name === "is_deleted")) {
     await run(`ALTER TABLE assets ADD COLUMN is_deleted INTEGER DEFAULT 0`);
+  }
+  if (!existingCols.some((col) => col.name === "needs_review")) {
+    await run(`ALTER TABLE assets ADD COLUMN needs_review INTEGER DEFAULT 0`);
   }
 
   await run(`CREATE INDEX IF NOT EXISTS idx_assets_file_hash ON assets(file_hash)`);
@@ -143,6 +147,7 @@ async function upsertAsset(asset) {
     episode_number,
     asset_type,
     intake_source,
+    needs_review,
     analytics_json
   } = asset;
 
@@ -164,6 +169,7 @@ async function upsertAsset(asset) {
            episode_number = ?,
            asset_type = ?,
            intake_source = ?,
+           needs_review = COALESCE(?, needs_review),
            analytics_json = ?,
            is_missing = 0,
            is_deleted = 0,
@@ -181,6 +187,7 @@ async function upsertAsset(asset) {
         episode_number,
         asset_type,
         intake_source,
+        needs_review ?? null,
         analytics_json,
         existingByPath.id
       ]
@@ -208,6 +215,7 @@ async function upsertAsset(asset) {
              episode_number = ?,
              asset_type = ?,
              intake_source = ?,
+             needs_review = COALESCE(?, needs_review),
              analytics_json = ?,
              is_missing = 0,
              is_deleted = 0,
@@ -225,6 +233,7 @@ async function upsertAsset(asset) {
           episode_number,
           asset_type,
           intake_source,
+          needs_review ?? null,
           analytics_json,
           existingByHash.id
         ]
@@ -247,10 +256,11 @@ async function upsertAsset(asset) {
       episode_number,
       asset_type,
       intake_source,
+      needs_review,
       analytics_json,
       is_missing,
       is_deleted
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)`,
     [
       file_name,
       file_path,
@@ -264,6 +274,7 @@ async function upsertAsset(asset) {
       episode_number,
       asset_type,
       intake_source,
+      needs_review ?? 0,
       analytics_json
     ]
   );
@@ -277,6 +288,29 @@ async function deleteAssetByPath(filePath) {
   await run(
     `DELETE FROM assets WHERE file_path = ?`,
     [filePath]
+  );
+}
+
+async function getAssetByPath(filePath) {
+  return get(
+    `SELECT file_hash, file_name, relative_path, file_path
+     FROM assets
+     WHERE file_path = ?`,
+    [filePath]
+  );
+}
+
+async function findActiveAssetByHash(fileHash, excludeFilePath) {
+  if (!fileHash) return null;
+  return get(
+    `SELECT id
+     FROM assets
+     WHERE file_hash = ?
+       AND file_path <> ?
+       AND is_missing = 0
+       AND is_deleted = 0
+     LIMIT 1`,
+    [fileHash, excludeFilePath]
   );
 }
 
@@ -318,9 +352,59 @@ async function updateAssetProjectByPath(filePath, projectCode, projectName = nul
   await run(
     `UPDATE assets
      SET project_id = ?,
+         needs_review = 0,
          updated_at = CURRENT_TIMESTAMP
      WHERE file_path = ?`,
     [project_id, filePath]
+  );
+}
+
+async function listAssignedNeedingReview() {
+  return all(`
+    SELECT
+      a.id,
+      a.file_name,
+      a.file_path,
+      a.relative_path,
+      a.extension,
+      a.size_bytes,
+      a.episode_number,
+      a.asset_type,
+      a.file_hash,
+      a.drive_id,
+      a.is_missing,
+      a.is_deleted,
+      a.needs_review,
+      a.updated_at,
+      p.project_code,
+      p.project_name
+    FROM assets a
+    LEFT JOIN projects p ON a.project_id = p.id
+    WHERE a.is_missing = 0
+      AND a.is_deleted = 0
+      AND a.project_id IS NOT NULL
+      AND a.needs_review = 1
+    ORDER BY a.updated_at DESC
+    LIMIT 500
+  `);
+}
+
+async function confirmAssetReviewByPath(filePath) {
+  await run(
+    `UPDATE assets
+     SET needs_review = 0,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE file_path = ?`,
+    [filePath]
+  );
+}
+
+async function confirmAllAssetReviews() {
+  await run(
+    `UPDATE assets
+     SET needs_review = 0,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE needs_review = 1`
   );
 }
 
@@ -353,6 +437,7 @@ async function listAssets() {
       a.drive_id,
       a.is_missing,
       a.is_deleted,
+      a.needs_review,
       a.updated_at,
       p.project_code,
       p.project_name
@@ -383,6 +468,7 @@ async function listIntakeAssets(intakeDir) {
       a.drive_id,
       a.is_missing,
       a.is_deleted,
+      a.needs_review,
       a.updated_at,
       p.project_code,
       p.project_name
@@ -412,12 +498,45 @@ async function listProjects() {
   `);
 }
 
+async function listDeletedAssets() {
+  return all(`
+    SELECT
+      a.id,
+      a.file_name,
+      a.file_path,
+      a.relative_path,
+      a.extension,
+      a.size_bytes,
+      a.episode_number,
+      a.asset_type,
+      a.file_hash,
+      a.drive_id,
+      a.is_missing,
+      a.is_deleted,
+      a.updated_at,
+      p.project_code,
+      p.project_name
+    FROM assets a
+    LEFT JOIN projects p ON a.project_id = p.id
+    WHERE a.is_deleted = 1
+    ORDER BY a.updated_at DESC
+    LIMIT 500
+  `);
+}
+
 async function getAnalyticsOverview() {
   const overview = await get(`
     SELECT
       COUNT(*) AS total_files_processed,
       SUM(CASE WHEN project_id IS NOT NULL THEN 1 ELSE 0 END) AS assigned_count,
-      SUM(CASE WHEN is_deleted = 1 THEN 1 ELSE 0 END) AS archived_count
+      SUM(
+        CASE
+          WHEN is_deleted = 1
+            OR REPLACE(file_path, '\\', '/') LIKE '%/Archive/%'
+          THEN 1
+          ELSE 0
+        END
+      ) AS archived_count
     FROM assets
   `);
 
@@ -472,6 +591,8 @@ module.exports = {
   ensureProject,
   upsertAsset,
   deleteAssetByPath,
+  getAssetByPath,
+  findActiveAssetByHash,
   markMissingByPath,
   markDeletedByPath,
   resetDeletedByPath,
@@ -480,5 +601,9 @@ module.exports = {
   getAnalyticsOverview,
   listAssets,
   listIntakeAssets,
-  listProjects
+  listProjects,
+  listDeletedAssets,
+  listAssignedNeedingReview,
+  confirmAssetReviewByPath,
+  confirmAllAssetReviews
 };

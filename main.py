@@ -21,6 +21,9 @@ if hasattr(sys.stdout, "reconfigure"):
 _APP_ROOT = Path(os.environ.get("VOCALFLOW_APP_ROOT", Path(__file__).resolve().parent))
 SOURCE_DIR = Path(os.environ.get("VOCALFLOW_SORT_SOURCE", _APP_ROOT / "VocalFlow_Intake"))
 DEST_BASE = Path(os.environ.get("VOCALFLOW_SORT_DEST", _APP_ROOT))
+UNASSIGNED_DIR = SOURCE_DIR / "Unassigned"
+ASSIGNED_DIR = SOURCE_DIR / "Assigned"
+PROJECTS_BASE = DEST_BASE / "Projects"
 
 # Leave these in intake for Electron (analytics / zip extract) — do not auto-move.
 _KEEP_IN_INTAKE_EXT = {
@@ -127,6 +130,10 @@ class SortHandler(FileSystemEventHandler):
 
         try:
             if ext in _KEEP_IN_INTAKE_EXT:
+                # Files in _KEEP_IN_INTAKE_EXT are not auto-moved into Projects,
+                # but they should still live under Intake/Unassigned so the UI
+                # has a consistent source of truth.
+                self.move_file(file_path, UNASSIGNED_DIR)
                 return
 
             video_exts = {'.mp4', '.mkv', '.avi', '.mov', '.m4v'}
@@ -158,23 +165,33 @@ class SortHandler(FileSystemEventHandler):
                         season_folder = f"Season {int(digits.group(0))}"
 
                 # 3. Fuzzy Match for Project Folder
-                project_path = self.find_fuzzy_match(clean_title, DEST_BASE / "Projects")
+                project_path = self.find_fuzzy_match(clean_title, PROJECTS_BASE)
 
-                # FIX: No matching folder = leave in intake for review.
+                # FIX: No matching folder = move to Unassigned for review.
                 # Do NOT auto-create a new project folder from the filename.
                 if not project_path:
                     print(
                         f"[sorter] No project folder matched '{clean_title}' "
-                        f"— leaving {filename} in intake for review.",
+                        f"— moving {filename} to Unassigned.",
                         flush=True
                     )
+                    self.move_file(file_path, UNASSIGNED_DIR)
                     return
 
-                # 4. Build Final Path
+                # 4. Build Final Path (Assigned folder = pending confirmation storage)
+                # Mirror the Projects/<...> relative structure under VocalFlow_Intake/Assigned/.
+                try:
+                    project_rel = project_path.relative_to(PROJECTS_BASE)
+                except ValueError:
+                    # Fallback: if relative_to fails for some reason, just use folder name.
+                    project_rel = Path(project_path.name)
+
+                assigned_base = ASSIGNED_DIR / project_rel
+
                 if season_folder:
-                    final_dest = project_path / season_folder / sub_type
+                    final_dest = assigned_base / season_folder / sub_type
                 else:
-                    final_dest = project_path / sub_type
+                    final_dest = assigned_base / sub_type
 
                 self.move_file(file_path, final_dest)
 
@@ -184,9 +201,11 @@ class SortHandler(FileSystemEventHandler):
             elif ext in image_exts or (ext and ext not in archive_exts):
                 print(
                     f"[sorter] No project matched for '{filename}' "
-                    f"— leaving in intake for Inbox review.",
+                    f"— moving to Unassigned for Inbox review.",
                     flush=True
                 )
+                self.move_file(file_path, UNASSIGNED_DIR)
+                return
 
         except Exception as e:
             print(f"[sorter] ERROR {filename}: {e}", flush=True)
@@ -241,6 +260,15 @@ class SortHandler(FileSystemEventHandler):
         dest_folder.mkdir(parents=True, exist_ok=True)
         final_path = dest_folder / src.name
 
+        # Avoid moving a file onto itself (can happen when the file is already
+        # in the correct intake subfolder).
+        try:
+            if src.resolve() == final_path.resolve():
+                return
+        except OSError:
+            # If resolve fails, fall back to attempting the move.
+            pass
+
         last_err = None
         for _attempt in range(5):
             try:
@@ -268,6 +296,8 @@ def initial_scan():
 
 def run_sorter_loop():
     SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+    UNASSIGNED_DIR.mkdir(parents=True, exist_ok=True)
+    ASSIGNED_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"[sorter] App root: {_APP_ROOT.resolve()}", flush=True)
     print(f"[sorter] Intake watch: {SOURCE_DIR.resolve()}", flush=True)

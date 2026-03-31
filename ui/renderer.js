@@ -33,6 +33,7 @@ const projectsSearch = document.getElementById("projectsSearch");
 const archiveSearch = document.getElementById("archiveSearch");
 
 const viewArchiveBtn = document.getElementById("viewArchiveBtn");
+const autoAssignedReviewBtn = document.getElementById("autoAssignedReviewBtn");
 
 let selectedArchiveItems = new Set();
 
@@ -55,8 +56,22 @@ const viewDeletedBtn = document.getElementById("viewDeletedBtn");
 const deletedFilesModal = document.getElementById("deletedFilesModal");
 const deletedFilesModalCloseBtn = document.getElementById("deletedFilesModalCloseBtn");
 const deletedFilesModalDoneBtn = document.getElementById("deletedFilesModalDoneBtn");
+const deleteHistoryBtn = document.getElementById("deleteHistoryBtn");
+const autoAssignedModal = document.getElementById("autoAssignedModal");
+const autoAssignedModalCloseBtn = document.getElementById("autoAssignedModalCloseBtn");
+const autoAssignedModalDoneBtn = document.getElementById("autoAssignedModalDoneBtn");
+const autoAssignedConfirmAllBtn = document.getElementById("autoAssignedConfirmAllBtn");
+const autoAssignedTableBody = document.getElementById("autoAssignedTableBody");
 
 const inboxBadge = document.getElementById("inboxBadge");
+const reviewNotice = document.getElementById("reviewNotice");
+const reviewNoticeText = document.getElementById("reviewNoticeText");
+const reviewNoticeBtn = document.getElementById("reviewNoticeBtn");
+const assignedReviewModal = document.getElementById("assignedReviewModal");
+const assignedReviewCloseBtn = document.getElementById("assignedReviewCloseBtn");
+const assignedReviewDoneBtn = document.getElementById("assignedReviewDoneBtn");
+const assignedReviewConfirmAllBtn = document.getElementById("assignedReviewConfirmAllBtn");
+const assignedReviewTableBody = document.getElementById("assignedReviewTableBody");
 
 const calendarGrid = document.getElementById("calendarGrid");
 const calendarMonthLabel = document.getElementById("calendarMonthLabel");
@@ -118,7 +133,7 @@ let calendarDate = new Date();
 let selectedDate = new Date();
 let currentProjectPath = "Projects";
 let projectPathHistory = [];   // stack of paths for back-button navigation
-let currentInboxFilter = "all";
+let currentInboxFilter = "unassigned";
 let archiveQuery = "";
 
 let selectedInboxItems = new Set();
@@ -126,9 +141,18 @@ let cachedInboxFolders = [];
 
 const TODO_STORAGE_KEY = "vocalflow_todos_v1";
 let todoStore = loadTodos();
+const AUTO_ASSIGNED_REVIEW_KEY = "vocalflow_auto_assigned_review_v1";
+let autoAssignedPendingReview = loadAutoAssignedPendingReview();
+const AUTO_ASSIGNED_REVIEW_INITIALIZED_KEY = "vocalflow_auto_assigned_review_initialized_v1";
 
 let cachedAssets = [];
+let cachedIntakeAssets = [];
+let cachedUnassignedInboxAssets = [];
 let cachedProjects = [];
+let cachedDeletedAssets = [];
+let cachedDeletedHistory = [];
+let cachedAssignedReviewAssets = [];
+let cachedUnassignedInboxFolders = [];
 const analyticsTotalFiles = document.getElementById("analyticsTotalFiles");
 const analyticsAssignmentRate = document.getElementById("analyticsAssignmentRate");
 const analyticsArchivedCount = document.getElementById("analyticsArchivedCount");
@@ -199,17 +223,66 @@ function getRelativePathFromAbsolute(fullPath) {
   return normalized.slice(idx + marker.length);
 }
 
+function loadAutoAssignedPendingReview() {
+  try {
+    const raw = localStorage.getItem(AUTO_ASSIGNED_REVIEW_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.map((item) => String(item)));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveAutoAssignedPendingReview() {
+  localStorage.setItem(
+    AUTO_ASSIGNED_REVIEW_KEY,
+    JSON.stringify(Array.from(autoAssignedPendingReview))
+  );
+}
+
+function isInIntake(item) {
+  const rel = String(item?.relative_path || "").replaceAll("\\", "/").toLowerCase();
+  const abs = String(item?.file_path || "").replaceAll("\\", "/").toLowerCase();
+  return rel.startsWith("vocalflow_intake/") || abs.includes("/vocalflow_intake/");
+}
+
+function isArchivedPath(filePath = "") {
+  const pathLower = String(filePath).replaceAll("\\", "/").toLowerCase();
+  return pathLower.includes("/archive/") && !pathLower.includes("/archive/deleted/");
+}
+
+function isInUnassignedFolder(item) {
+  const rel = String(item?.relative_path || "").replaceAll("\\", "/").toLowerCase();
+  const abs = String(item?.file_path || "").replaceAll("\\", "/").toLowerCase();
+  return (
+    rel.includes("/vocalflow_intake/unassigned/") ||
+    rel.endsWith("/vocalflow_intake/unassigned") ||
+    abs.includes("/vocalflow_intake/unassigned/")
+  );
+}
+
+function isInAssignedFolder(item) {
+  const rel = String(item?.relative_path || "").replaceAll("\\", "/").toLowerCase();
+  const abs = String(item?.file_path || "").replaceAll("\\", "/").toLowerCase();
+  return (
+    rel.includes("/vocalflow_intake/assigned/") ||
+    rel.endsWith("/vocalflow_intake/assigned") ||
+    abs.includes("/vocalflow_intake/assigned/")
+  );
+}
+
 function getAllInboxItems() {
   return [
-    ...cachedAssets.map((item) => ({ ...item, is_directory: false })),
-    ...cachedInboxFolders
+    ...cachedUnassignedInboxAssets.map((item) => ({ ...item, is_directory: false })),
+    ...cachedUnassignedInboxFolders
   ];
 }
 
 function getSelectedInboxItems() {
   const allItems = [
-    ...cachedAssets.map((item) => ({ ...item, is_directory: false })),
-    ...cachedInboxFolders
+    ...cachedUnassignedInboxAssets.map((item) => ({ ...item, is_directory: false })),
+    ...cachedUnassignedInboxFolders
   ];
 
   return allItems.filter((item) => selectedInboxItems.has(item.relative_path));
@@ -303,7 +376,11 @@ function addLog(target, message) {
 const ACTIVITY_LABEL_CLASS = {
   sorted:  "info",
   inbox:   "success",
-  removed: "archived",
+  assigned: "info",
+  archived: "archived",
+  unarchived: "success",
+  moved: "info",
+  removed: "danger",
   error:   "danger"
 };
 
@@ -330,16 +407,20 @@ function addRecentActivity(label, message) {
 function renderActionList(assets) {
   if (!actionList) return;
 
-  const urgentAssets = (assets || [])
-    .filter((item) => getInboxStatus(item).label === "Unassigned")
-    .slice(0, 8);
+  // Inbox "Action Needed" should use the same source-of-truth as the Active Inbox panel:
+  // intake items that are currently visible in the inbox (unassigned UI), regardless
+  // of any prefilled DB `project_code`.
+  const urgentAssets = (assets || []).slice(0, 8);
   if (!urgentAssets.length) {
     actionList.innerHTML = `<div class="empty-mini">No files currently need review.</div>`;
     return;
   }
 
   actionList.innerHTML = urgentAssets.map((asset) => {
-    const status = getInboxStatus(asset);
+    const status = isInUnassignedFolder(asset)
+      ? { label: "Unassigned", className: "success" }
+      : getInboxStatus(asset);
+    const isAssignedPending = !isInUnassignedFolder(asset);
     const displayName = asset.is_directory ? asset.name : asset.file_name;
     return `
     <div class="action-row">
@@ -351,6 +432,11 @@ function renderActionList(assets) {
         <span class="mini-tag ${status.className}">
           ${status.label}
         </span>
+        ${isAssignedPending ? `
+          <button class="btn btn-secondary btn-small action-review-btn" type="button" data-path="${escapeHtml(asset.relative_path || "")}">
+            Review
+          </button>
+        ` : ``}
       </div>
     </div>
   `;
@@ -367,12 +453,7 @@ function getInboxStatus(item) {
     return { label: "Missing", className: "danger" };
   }
 
-  const filePathLower = (item.file_path || "").toLowerCase();
-  const isArchived =
-    filePathLower.includes("\\archive\\") ||
-    filePathLower.includes("/archive/") ||
-    filePathLower.endsWith("\\archive") ||
-    filePathLower.endsWith("/archive");
+  const isArchived = isArchivedPath(item.file_path || "");
 
   if (isArchived) {
     return { label: "Archived", className: "archived" };
@@ -382,11 +463,11 @@ function getInboxStatus(item) {
     return { label: "Assigned", className: "info" };
   }
 
-  return { label: "Unassigned", className: "danger" };
+  return { label: "Unassigned", className: "success" };
 }
 
 function renderInboxTables(files, folders) {
-  if (!inboxItemsTableBody || !assignedItemsTableBody || !archivedTableBody || !deletedTableBody) return;
+  if (!inboxItemsTableBody || !archivedTableBody || !deletedTableBody) return;
 
   // Combine files and folders into one list
   const allItems = [
@@ -401,26 +482,23 @@ function renderInboxTables(files, folders) {
     return bDate - aDate;
   });
 
-  // FIX: Separate active vs assigned, explicitly excluding archived/deleted/missing
-  // from the active inbox so they never show up as ghost rows.
+  // Active inbox: intake-only + unassigned + not missing/deleted/archived.
   const activeItems = allItems.filter(item => {
     if (item.is_deleted || item.is_missing) return false;
+    if (!isInUnassignedFolder(item)) return false;
     const s = getInboxStatus(item);
-    if (s.className === "archived" || s.className === "danger") return false;
-    return !item.project_code;
+    if (s.className === "archived") return false;
+    return true;
   });
 
-  const assignedItems = allItems.filter(item => {
-    if (item.is_deleted || item.is_missing) return false;
-    const s = getInboxStatus(item);
-    if (s.className === "archived" || s.className === "danger") return false;
-    return !!item.project_code;
-  });
+  // Assigned review items are handled in a modal, not in the inbox page UI.
 
   // Helper function to render inbox table rows
-  const renderInboxRows = (items, showCheckboxes = true) => {
+  const renderInboxRows = (items, showCheckboxes = true, statusOverrideFn = null) => {
     return items.map((item) => {
-      const status = getInboxStatus(item);
+      const status = typeof statusOverrideFn === "function"
+        ? statusOverrideFn(item)
+        : getInboxStatus(item);
       const name = item.itemType === 'file' ? item.file_name : item.name;
       const type = item.itemType === 'file' ? (item.asset_type || item.extension || "file") : "folder";
       const checkboxCell = showCheckboxes ? `
@@ -448,16 +526,9 @@ function renderInboxTables(files, folders) {
     }).join("");
   };
 
-  // Determine visibility based on filter
-  const showActive = true;
-  const showAssigned = currentInboxFilter === "all";
-
-  // Get parent panels for active and assigned tables
+  // Get parent panel for active items table
   const activePanelParent = inboxItemsTableBody.closest(".inbox-panel");
-  const assignedPanelParent = assignedItemsTableBody.closest(".inbox-panel");
-
-  if (activePanelParent) activePanelParent.style.display = showActive ? "block" : "none";
-  if (assignedPanelParent) assignedPanelParent.style.display = showAssigned ? "block" : "none";
+  if (activePanelParent) activePanelParent.style.display = "block";
 
   // Render active items
   if (!activeItems.length) {
@@ -467,34 +538,28 @@ function renderInboxTables(files, folders) {
       </tr>
     `;
   } else {
-    inboxItemsTableBody.innerHTML = renderInboxRows(activeItems, true);
+    inboxItemsTableBody.innerHTML = renderInboxRows(
+      activeItems,
+      true,
+      () => ({ label: "Unassigned", className: "success" })
+    );
   }
 
-  // Render assigned items
-  if (!assignedItems.length) {
-    assignedItemsTableBody.innerHTML = `
-      <tr>
-        <td colspan="6" class="empty-table">No assigned items.</td>
-      </tr>
-    `;
-  } else {
-    assignedItemsTableBody.innerHTML = renderInboxRows(assignedItems, false);
-  }
+  // (Assigned panel intentionally not rendered)
 
   const archived = (cachedAssets || []).filter((asset) => {
     const status = getInboxStatus(asset);
     if (status.className !== "archived") return false;
+    if (!isArchivedPath(asset.file_path)) return false;
     if (!archiveQuery) return true;
     return [asset.file_name, asset.relative_path]
       .filter(Boolean)
       .some((v) => String(v).toLowerCase().includes(archiveQuery));
   });
 
-  const deleted = (cachedAssets || []).filter((asset) => {
-    const status = getInboxStatus(asset);
-    if (!(status.className === "danger" && status.label === "Deleted")) return false;
+  const deleted = (cachedDeletedHistory || []).filter((entry) => {
     if (!archiveQuery) return true;
-    return [asset.file_name, asset.relative_path]
+    return [entry.file_name, entry.relative_path]
       .filter(Boolean)
       .some((v) => String(v).toLowerCase().includes(archiveQuery));
   });
@@ -524,13 +589,12 @@ function renderInboxTables(files, folders) {
     `;
 
   deletedTableBody.innerHTML = deleted.length
-    ? deleted.map((asset) => {
-        const status = getInboxStatus(asset);
+    ? deleted.map((entry) => {
         return `
       <tr>
-        <td>${escapeHtml(asset.file_name)}</td>
-        <td>${formatDateTime(asset.updated_at)}</td>
-        <td><span class="status-chip ${status.className}">${status.label}</span></td>
+        <td>${escapeHtml(entry.file_name || "-")}</td>
+        <td>${formatDateTime(entry.deleted_at)}</td>
+        <td><span class="status-chip danger">Deleted</span></td>
       </tr>
     `;
       }).join("")
@@ -542,7 +606,7 @@ function renderInboxTables(files, folders) {
 
   updateInboxActionState();
 
-  return { activeItems, assignedItems };
+  return { activeItems, assignedItems: [] };
 }
 
 function renderBreadcrumbs(relativePath) {
@@ -735,12 +799,24 @@ async function loadStats() {
     const totalAssets   = document.getElementById("statTotalAssets");
     const missingAssets = document.getElementById("statMissingAssets");
 
-    const activeUnassignedCount =
-      (cachedAssets || []).filter(a => !a.is_missing && !a.is_deleted && !a.project_code).length +
-      (cachedInboxFolders || []).filter(f => !f.is_missing && !f.is_deleted && !f.project_code).length;
+    // Home "Active Inbox" should reflect all intake FILES (not folders, not archived).
+    const intakeFileCount = (cachedIntakeAssets || []).filter((a) => {
+      if (!a) return false;
+      if (a.is_missing || a.is_deleted) return false;
+      if (a.asset_type === "folder") return false;
+      return true;
+    }).length;
 
-    if (totalAssets)   totalAssets.textContent   = activeUnassignedCount;
-    if (missingAssets) missingAssets.textContent = analytics.archived_count ?? stats.deleted_assets ?? 0;
+    // Home "Total Archive" should reflect the CURRENT files in the Archive folder.
+    const currentArchiveCount = (cachedAssets || []).filter((a) => {
+      if (!a) return false;
+      if (a.is_missing || a.is_deleted) return false;
+      if (a.asset_type === "folder") return false;
+      return isArchivedPath(a.file_path);
+    }).length;
+
+    if (totalAssets) totalAssets.textContent = intakeFileCount;
+    if (missingAssets) missingAssets.textContent = currentArchiveCount;
   } catch (error) {
     console.error("loadStats error:", error);
     throw error;
@@ -751,12 +827,41 @@ async function loadData() {
   if (!window.vocalflowAPI?.listAssets || !window.vocalflowAPI?.listProjects) return;
 
   try {
-    console.log("Calling listIntakeAssets");
-    // FIX: Only load assets physically in VocalFlow_Intake for the inbox.
-    // Files sorted into Projects/ are not pending review — exclude them.
-    cachedAssets = await window.vocalflowAPI.listIntakeAssets?.()
-      ?? await window.vocalflowAPI.listAssets();
-    console.log("Intake assets received:", cachedAssets?.length);
+    console.log("Calling listAssets + listIntakeAssets");
+    const [allAssets, intakeAssets] = await Promise.all([
+      window.vocalflowAPI.listAssets(),
+      window.vocalflowAPI.listIntakeAssets?.() ?? []
+    ]);
+    cachedAssets = allAssets || [];
+    cachedIntakeAssets = intakeAssets || [];
+    cachedDeletedAssets = (cachedAssets || []).filter((asset) => asset.is_deleted);
+    // Intake-only Inbox view:
+    // - Unassigned items live under VocalFlow_Intake/Unassigned
+    // - Auto-assigned pending confirmation live under VocalFlow_Intake/Assigned
+    cachedUnassignedInboxAssets = (cachedIntakeAssets || []).filter((asset) => {
+      if (!asset) return false;
+      if (asset.is_deleted || asset.is_missing) return false;
+      if (asset.asset_type === "folder") return false;
+      return isInUnassignedFolder(asset);
+    });
+
+    cachedAssignedReviewAssets = (cachedAssets || []).filter((asset) => {
+      if (!asset) return false;
+      if (asset.is_deleted || asset.is_missing) return false;
+      if (asset.asset_type === "folder") return false;
+      return Number(asset.needs_review || 0) === 1 || isInAssignedFolder(asset);
+    });
+
+    // Permanently deleted history is stored outside the DB (tombstone log),
+    // because permanent deletes purge DB rows.
+    try {
+      const res = await window.vocalflowAPI?.getDeletedHistory?.(200);
+      cachedDeletedHistory = res?.entries || [];
+    } catch {
+      cachedDeletedHistory = [];
+    }
+    console.log("All assets received:", cachedAssets?.length);
+    console.log("Intake assets received:", cachedIntakeAssets?.length);
     console.log("Calling listProjects");
     cachedProjects = await window.vocalflowAPI.listProjects();
     console.log("Projects received:", cachedProjects?.length);
@@ -764,38 +869,86 @@ async function loadData() {
     cachedInboxFolders = await window.vocalflowAPI.listIntakeFolders();
     console.log("Folders received:", cachedInboxFolders?.length);
 
+    cachedUnassignedInboxFolders = (cachedInboxFolders || []).filter((folder) => {
+      if (!folder) return false;
+      if (folder.is_deleted || folder.is_missing) return false;
+      return isInUnassignedFolder(folder);
+    });
+
     // Load folder-based client summary
     const clientSummary = await window.vocalflowAPI.getProjectsFolderSummary?.() || [];
 
     applyInboxFilters();
     renderProjectsSummary(clientSummary);
     updateInboxBadge();
+    renderAssignedReviewNotice();
   } catch (error) {
     console.error("loadData error:", error);
     throw error;
   }
 }
 
+function renderAssignedReviewNotice() {
+  if (!autoAssignedReviewBtn) return;
+  const count = cachedAssignedReviewAssets.length;
+  if (!count) {
+    autoAssignedReviewBtn.style.display = "none";
+    return;
+  }
+  autoAssignedReviewBtn.textContent = `New files were assigned automatically. Please review to confirm. (${count})`;
+  autoAssignedReviewBtn.style.display = "inline-flex";
+}
+
+function renderAssignedReviewTable() {
+  if (!autoAssignedTableBody) return;
+  const rows = cachedAssignedReviewAssets || [];
+  if (!rows.length) {
+    autoAssignedTableBody.innerHTML = `
+      <tr>
+        <td colspan="4" class="empty-table">No auto-assigned files pending confirmation.</td>
+      </tr>
+    `;
+    return;
+  }
+
+  autoAssignedTableBody.innerHTML = rows.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.file_name)}</td>
+      <td>${escapeHtml(item.project_code || item.project_name || "Unknown")}</td>
+      <td class="path-muted">${escapeHtml(item.relative_path || item.file_path || "-")}</td>
+      <td>
+        <div class="autoassigned-actions">
+          <button class="btn btn-secondary btn-small review-confirm-btn" type="button" data-path="${escapeHtml(item.relative_path)}">Confirm</button>
+          <button class="btn btn-secondary btn-small review-move-btn" type="button" data-path="${escapeHtml(item.relative_path)}">Move...</button>
+        </div>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function openAssignedReviewModal() {
+  renderAssignedReviewTable();
+  autoAssignedModal?.classList.add("active");
+}
+
+function closeAssignedReviewModal() {
+  autoAssignedModal?.classList.remove("active");
+}
+
 function updateInboxBadge() {
   if (!inboxBadge) return;
 
-  // Count active intakes: unassigned files that are not missing + not archived + unassigned folders
-  // FIX: Exclude ghost/missing/deleted rows from the badge count.
-  const activeFiles = (cachedAssets || []).filter((item) => {
-    if (item.is_missing || item.is_deleted) return false;
-    const status = getInboxStatus(item);
-    return status.className === "success" && !item.project_code;
+  // Inbox badge counts ALL intake FILES (Unassigned + Assigned), so it stays
+  // active while the sorter is waiting for confirmation in Intake/Assigned.
+  const intakeFileCount = (cachedIntakeAssets || []).filter((a) => {
+    if (!a) return false;
+    if (a.is_missing || a.is_deleted) return false;
+    if (a.asset_type === "folder") return false;
+    return true;
   }).length;
 
-  const activeFolders = (cachedInboxFolders || []).filter((item) => {
-    if (item.is_missing || item.is_deleted) return false;
-    const status = getInboxStatus(item);
-    return status.className === "success" && !item.project_code;
-  }).length;
-  const totalActive = activeFiles + activeFolders;
-
-  if (totalActive > 0) {
-    inboxBadge.textContent = totalActive;
+  if (intakeFileCount > 0) {
+    inboxBadge.textContent = intakeFileCount;
     inboxBadge.style.display = 'inline-block';
   } else {
     inboxBadge.style.display = 'none';
@@ -1055,8 +1208,8 @@ function renderCalendar(date) {
 function applyInboxFilters() {
   const query = (inboxSearch?.value || "").toLowerCase().trim();
 
-  let files = [...cachedAssets].map((item) => ({ ...item, is_directory: false }));
-  let folders = [...cachedInboxFolders];
+  let files = [...(cachedUnassignedInboxAssets || [])].map((item) => ({ ...item, is_directory: false }));
+  let folders = [...(cachedUnassignedInboxFolders || [])];
 
   if (query) {
     files = files.filter((item) =>
@@ -1077,9 +1230,12 @@ function applyInboxFilters() {
     folders = [];
   } else if (currentInboxFilter === "folders") {
     files = [];
-  } else if (currentInboxFilter === "unassigned") {
-    files = files.filter((item) => !item.project_code);
-    folders = folders.filter((item) => !item.project_code);
+  } else if (currentInboxFilter === "all" || currentInboxFilter === "unassigned" || currentInboxFilter === "active") {
+    // default: show unassigned intake items
+  } else if (currentInboxFilter === "assigned" || currentInboxFilter === "missing") {
+    // Assigned items are shown in the separate Assigned section/modal.
+    files = [];
+    folders = [];
   }
 
   const visiblePaths = new Set([
@@ -1091,10 +1247,16 @@ function applyInboxFilters() {
     [...selectedInboxItems].filter((path) => visiblePaths.has(path))
   );
 
-  // Render inbox and drive Action Needed from the same filtered dataset
+  // Render inbox tables and "Action Needed" from a combined dataset:
+  // - Unassigned inbox items (Unassigned folder)
+  // - Assigned-but-not-confirmed items (Assigned folder)
   const result = renderInboxTables(files, folders);
   const activeItems = result?.activeItems || [];
-  renderActionList(activeItems);
+  const assignedPending = (cachedAssignedReviewAssets || []).map((asset) => ({
+    ...asset,
+    is_directory: false
+  }));
+  renderActionList([...activeItems, ...assignedPending]);
 }
 
 function toggleInboxFilterMenu() {
@@ -1205,7 +1367,7 @@ function bindSearch() {
           </div>
         `).join("");
       }, 300);
-    });
+;    });
   }
 }
 
@@ -1331,6 +1493,7 @@ async function moveSelectedInboxItems(targetRelativeFolder) {
 
   await refreshAll();
   await loadProjectDirectory("Projects");
+  deletedFilesModal?.classList.add("active");
 }
 
 async function deleteSelectedInboxItems() {
@@ -1344,47 +1507,16 @@ async function deleteSelectedInboxItems() {
   const confirmed = confirm(`Are you sure you want to delete ${selected.length} item(s)? This action cannot be undone.`);
 
   if (!confirmed) return;
-
-  // FIX: Split selected items into "on disk" vs "ghost" (already moved/missing).
-  // Ghost files cannot be moved to Archive/Deleted because they no longer exist
-  // on disk — fs:move-items would throw. Call deleteItems for those instead,
-  // which now gracefully purges just the DB row.
-  const onDisk = selected.filter(item => !item.is_missing && !item.is_deleted);
-  const ghosts = selected.filter(item => item.is_missing || item.is_deleted);
-
-  const onDiskPaths = onDisk.map(item => item.relative_path);
-  const ghostPaths  = ghosts.map(item => item.relative_path);
-
-  let deletedCount = 0;
-  let anyError = null;
-
-  if (onDiskPaths.length) {
-    const result = await window.vocalflowAPI.moveItems(onDiskPaths, "Archive/Deleted");
-    if (!result?.ok) {
-      anyError = result?.error || "Move to deleted failed.";
-    } else {
-      deletedCount += result.moved?.length || onDiskPaths.length;
-    }
-  }
-
-  if (ghostPaths.length) {
-    const result = await window.vocalflowAPI.deleteItems(ghostPaths);
-    if (!result?.ok) {
-      anyError = anyError || result?.error || "Ghost purge failed.";
-    } else {
-      deletedCount += result.deleted?.length || ghostPaths.length;
-    }
-  }
-
-  if (anyError) {
-    showMessage(anyError);
+  const relativePaths = selected.map(item => item.relative_path);
+  const result = await window.vocalflowAPI.deleteItems(relativePaths);
+  if (!result?.ok) {
+    showMessage(result?.error || "Delete failed.");
+    return;
   }
 
   selectedInboxItems.clear();
-
-  if (deletedCount) {
-    alert(`${deletedCount} item(s) removed from inbox.`);
-  }
+  const deletedCount = result.deleted?.length || relativePaths.length;
+  alert(`${deletedCount} item(s) permanently deleted.`);
 
   await refreshAll();
   await loadProjectDirectory("Projects");
@@ -1429,7 +1561,7 @@ archiveUnarchiveBtn?.addEventListener("click", async () => {
   try {
     const result = await window.vocalflowAPI.moveItems(
       itemsToUnarchive,
-      "" // Intake is the root
+      "VocalFlow_Intake/Unassigned"
     );
 
     if (result?.ok) {
@@ -1454,7 +1586,7 @@ archiveDeleteBtn?.addEventListener("click", async () => {
   const itemsToDelete = Array.from(selectedArchiveItems);
   const confirmed = confirm(`Delete ${itemsToDelete.length} archived item(s) permanently?`);
   if (!confirmed) return;
-  const result = await window.vocalflowAPI.moveItems(itemsToDelete, "Archive/Deleted");
+  const result = await window.vocalflowAPI.deleteItems(itemsToDelete);
   if (!result?.ok) {
     alert(result?.error || "Delete failed.");
     return;
@@ -1535,7 +1667,6 @@ inboxToggleSelectAllBtn?.addEventListener("click", () => {
     if (status.className === "archived" || status.className === "danger") return false;
     if (currentInboxFilter === "files" && item.is_directory) return false;
     if (currentInboxFilter === "folders" && !item.is_directory) return false;
-    if (currentInboxFilter === "unassigned" && item.project_code) return false;
     const query = (inboxSearch?.value || "").toLowerCase().trim();
     if (!query) return true;
     const values = item.is_directory
@@ -1567,13 +1698,97 @@ archiveToggleSelectAllBtn?.addEventListener("click", () => {
   applyInboxFilters();
 });
 
-viewDeletedBtn?.addEventListener("click", () => {
+viewDeletedBtn?.addEventListener("click", async () => {
+  // Reload cached tombstones so the modal is always up to date.
+  try {
+    await refreshAll();
+  } catch {
+    // ignore
+  }
   deletedFilesModal?.classList.add("active");
 });
 deletedFilesModalCloseBtn?.addEventListener("click", () => deletedFilesModal?.classList.remove("active"));
 deletedFilesModalDoneBtn?.addEventListener("click", () => deletedFilesModal?.classList.remove("active"));
 deletedFilesModal?.addEventListener("click", (e) => {
   if (e.target === deletedFilesModal) deletedFilesModal.classList.remove("active");
+});
+
+deleteHistoryBtn?.addEventListener("click", async () => {
+  const confirmed = confirm("Delete permanently the Delete history log? This cannot be undone.");
+  if (!confirmed) return;
+
+  const result = await window.vocalflowAPI.clearDeletedHistory?.();
+  if (!result?.ok) {
+    showMessage(result?.error || "Failed to clear delete history.");
+    return;
+  }
+
+  await refreshAll();
+});
+
+autoAssignedReviewBtn?.addEventListener("click", () => {
+  openAssignedReviewModal();
+});
+
+autoAssignedModalCloseBtn?.addEventListener("click", closeAssignedReviewModal);
+autoAssignedModalDoneBtn?.addEventListener("click", closeAssignedReviewModal);
+
+autoAssignedConfirmAllBtn?.addEventListener("click", async () => {
+  const relativePaths = (cachedAssignedReviewAssets || []).map((item) => item.relative_path);
+  if (!relativePaths.length) return;
+
+  const result = await window.vocalflowAPI.confirmAssignedItems?.(relativePaths);
+  if (!result?.ok) {
+    showMessage(result?.error || "Failed to confirm assigned items.");
+    return;
+  }
+
+  await refreshAll();
+  renderAssignedReviewTable();
+  updateInboxBadge();
+});
+
+autoAssignedTableBody?.addEventListener("click", async (e) => {
+  const confirmBtn = e.target.closest(".review-confirm-btn");
+  if (confirmBtn) {
+    const relativePath = confirmBtn.dataset.path;
+    if (!relativePath) return;
+    const result = await window.vocalflowAPI.confirmAssignedItems?.([relativePath]);
+    if (!result?.ok) {
+      showMessage(result?.error || "Failed to confirm assigned item.");
+      return;
+    }
+    await refreshAll();
+    renderAssignedReviewTable();
+    updateInboxBadge();
+    return;
+  }
+
+  const moveBtn = e.target.closest(".review-move-btn");
+  if (!moveBtn) return;
+
+  const relativePath = moveBtn.dataset.path;
+  if (!relativePath) return;
+
+  // Reuse the existing Move modal for a single selected intake item.
+  openMoveModal(async (targetRelativeFolder) => {
+    try {
+      const result = await window.vocalflowAPI.moveItems?.([relativePath], targetRelativeFolder);
+      if (!result?.ok) {
+        showMessage(result?.error || "Move failed.");
+        return;
+      }
+      await refreshAll();
+      renderAssignedReviewTable();
+      updateInboxBadge();
+    } catch (err) {
+      showMessage(err?.message || "Move failed.");
+    }
+  });
+});
+
+autoAssignedModal?.addEventListener("click", (e) => {
+  if (e.target === autoAssignedModal) closeAssignedReviewModal();
 });
 
 rescanBtn?.addEventListener("click", async () => {
@@ -1925,9 +2140,8 @@ addFolderBtn?.addEventListener("click", async () => {
 });
 
 
-window.vocalflowAPI?.onDatabaseUpdated?.(async (payload) => {
-  addLog(eventLog, `Database updated for ${payload.filePath}`);
-  addLog(analyticsFeed, `Watcher sync updated ${payload.filePath}`);
+window.vocalflowAPI?.onDatabaseUpdated?.(async () => {
+  // Keep UI in sync, but avoid noisy "Database updated..." entries.
   await refreshAll();
 });
 
@@ -2012,23 +2226,55 @@ window.vocalflowAPI?.onFilesystemChanged?.(async (payload) => {
   // For import events, outcomes are already logged by the button handler above.
   // For watcher-driven events (sorter moved a file autonomously), log them here.
   if (type === "file-added") {
-    addRecentActivity("sorted", `${payload.relativePath || "A file"} has been automatically moved and indexed.`);
+    const rel = String(payload.relativePath || "").replaceAll("\\", "/");
+    const relLower = rel.toLowerCase();
+    const inAssigned = relLower.includes("/vocalflow_intake/assigned/");
+    const inUnassigned = relLower.includes("/vocalflow_intake/unassigned/");
+
+    if (inAssigned) {
+      addRecentActivity("assigned", `${rel} assigned automatically (needs confirmation).`);
+    } else if (inUnassigned) {
+      addRecentActivity("inbox", `${rel} added to inbox for review.`);
+    } else {
+      addRecentActivity("moved", `${rel} added.`);
+    }
   } else if (type === "file-removed") {
-    addRecentActivity("removed", `File removed: ${payload.relativePath || ""}`);
+    addRecentActivity("removed", `Removed: ${String(payload.relativePath || "")}`);
   } else if (type === "file-changed") {
-    addRecentActivity("sorted", `File updated: ${payload.relativePath || ""}`);
+    addRecentActivity("moved", `Updated: ${String(payload.relativePath || "")}`);
   } else if (type === "directory-added") {
-    addRecentActivity("sorted", `Folder created: ${payload.relativePath || ""}`);
+    addRecentActivity("moved", `Folder created: ${String(payload.relativePath || "")}`);
   } else if (type === "items-moved") {
     const moves = payload.moved || [];
-    moves.forEach(m => {
-      addRecentActivity("sorted", `${m.oldRelativePath} has been automatically moved to ${m.newRelativePath}`);
+    moves.forEach((m) => {
+      const oldP = String(m.oldRelativePath || "").replaceAll("\\", "/");
+      const newP = String(m.newRelativePath || "").replaceAll("\\", "/");
+
+      const oldLower = oldP.toLowerCase();
+      const newLower = newP.toLowerCase();
+
+      const isInArchive = newLower.includes("/archive/") && !newLower.includes("/archive/deleted/");
+      const isInOldArchive = oldLower.includes("/archive/") && !oldLower.includes("/archive/deleted/");
+      const isAssignedToProjects = newLower.startsWith("projects/") || newLower.includes("/projects/");
+      const isMovingBackFromArchive = isInOldArchive && !isInArchive;
+
+      if (newLower.includes("/archive/deleted/")) {
+        addRecentActivity("removed", `Deleted: ${newP}`);
+      } else if (isMovingBackFromArchive) {
+        addRecentActivity("unarchived", `Unarchived: ${oldP}`);
+      } else if (isInArchive) {
+        addRecentActivity("archived", `Archived: ${newP}`);
+      } else if (isAssignedToProjects) {
+        addRecentActivity("assigned", `Assigned: ${newP}`);
+      } else {
+        addRecentActivity("moved", `Moved: ${oldP} -> ${newP}`);
+      }
     });
   } else if (type === "items-deleted" || type === "item-deleted") {
     const items = payload.deleted || (payload.relativePath ? [payload.relativePath] : []);
-    items.forEach(p => addRecentActivity("removed", `Deleted: ${p}`));
+    items.forEach((p) => addRecentActivity("removed", `Deleted: ${String(p)}`));
   } else {
-    addLog(analyticsFeed, `Filesystem changed: ${type}`);
+    // ignore other internal events
   }
 
   await refreshAll();
@@ -2036,8 +2282,18 @@ window.vocalflowAPI?.onFilesystemChanged?.(async (payload) => {
 });
 
 bindSearch();
+inboxTabs?.querySelectorAll(".inbox-tab").forEach((btn) => {
+  btn.classList.toggle("active", btn.dataset.filter === "unassigned");
+});
 renderCalendar(calendarDate);
 renderTodoList();
 updateInboxActionState();
 showLogin();
 renderTalents();
+
+// Delegated click for "Review" buttons in the Home Action Needed widget.
+actionList?.addEventListener("click", (e) => {
+  const btn = e.target.closest(".action-review-btn");
+  if (!btn) return;
+  openAssignedReviewModal();
+});

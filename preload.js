@@ -6,13 +6,24 @@ contextBridge.exposeInMainWorld("vocalflowAPI", {
   getDashboardStats: () => ipcRenderer.invoke("dashboard:get-stats"),
   getAnalyticsOverview: () => ipcRenderer.invoke("analytics:get-overview"),
   listAssets: () => ipcRenderer.invoke("assets:list"),
+  listDeletedAssets: () => ipcRenderer.invoke("assets:list-deleted"),
   listIntakeAssets: () => ipcRenderer.invoke("assets:list-intake"),
+  listAssignedForReview: () => ipcRenderer.invoke("assets:list-assigned-review"),
+  confirmAssignedReview: (filePath) => ipcRenderer.invoke("assets:confirm-review", { filePath }),
+  confirmAllAssignedReviews: () => ipcRenderer.invoke("assets:confirm-review-all"),
   listProjects: () => ipcRenderer.invoke("projects:list"),
   getProjectsFolderSummary: () => ipcRenderer.invoke("projects:folder-summary"),
 
   // Intake
   rescanIntake: () => ipcRenderer.invoke("intake:rescan"),
   listIntakeFolders: () => ipcRenderer.invoke("intake:list-folders"),
+  confirmAssignedItems: (items) =>
+    ipcRenderer.invoke("inbox:confirm-assigned-items", { items }),
+
+  // Permanently deleted history (tombstone log)
+  getDeletedHistory: (limit = 200) =>
+    ipcRenderer.invoke("deletions:get-history", { limit }),
+  clearDeletedHistory: () => ipcRenderer.invoke("deletions:clear-history"),
   
   // File system
   listDirectory: (relativePath = "") =>
